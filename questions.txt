@@ -1,0 +1,69 @@
+ZingHR:
+
+1. What is the data that zingHR needs, and how often does it
+ need it?
+ - All swipes sent at midnight once can work contingent on
+ zingHR calculation.
+
+2. How to refresh token for ZingHR APIs?
+
+3--?
+
+4. What is the difference between swipeDateTime and 
+swipeRecievedDateTime?
+--  optional, irrelavant
+
+5. What field guarantees idempotency? if I resend an 
+already-accepted record, do I get a success, a 409,
+or a duplicate row? Do they dedupe on unique ID? or what
+needs to be the unique key?
+- duplicates seem to not have an issue., try on UAT.
+
+6. Is there an expiratino for the client secret used for authentication?
+-- can be configured as required. 
+
+7. do we need realtime sync or daily once?
+-- once
+
+8. How does zingHR handle delayed swipe delivery, especially
+with date change? that is swipes delivered the next day.
+-- apparently should not be an issue.
+
+9. terminal ID vs source?
+-- optional fields, irrelavant 
+
+10. Does the sync endpoint give per entry error remarks 
+or errors for the whole array?
+
+11. Auth- for how long is the JWT valid? and does issuing a
+new one invalidate the last one?
+-- 2 mins, yes
+
+12.  Is the order of swipes important?
+-- no
+
+13. Error response codes on sync swipe API?
+-- check on UAT.
+
+
+
+
+
+
+Matrix:
+
+1. For what datetime ranges does matrix allow for data 
+to be fetched?
+
+2. What is Idate and EDate. and when we passing date time 
+parameters to matrix URL, which time is it?
+
+3. What is uniqueTransactionId?
+
+4. Is it on the middleware to convert the fields coming from
+the template of cosec to fields accepted by ZingHR?
+
+
+General:
+
+1. How often we need to sync data?

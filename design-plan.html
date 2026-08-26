@@ -1,0 +1,837 @@
+<title>Punch to Payroll</title>
+<style>
+  :root {
+    --bg: #EEF1F1;
+    --surface: #FBFCFC;
+    --surface-2: #E3E9E8;
+    --ink: #101817;
+    --ink-2: #465453;
+    --ink-3: #6D7E7C;
+    --rule: #CAD3D2;
+    --rule-strong: #A9B7B5;
+    --accent: #0C6560;
+    --accent-ink: #08514D;
+    --accent-soft: #D6E8E6;
+    --critical: #A83228;
+    --critical-soft: #F5DFDC;
+    --warning: #8A5906;
+    --warning-soft: #F6E7CC;
+    --good: #1F6B4E;
+    --good-soft: #D7EAE0;
+
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, "Cascadia Mono", "Roboto Mono", Menlo, Consolas, monospace;
+    --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+
+    --measure: 68ch;
+    --step--1: 0.8125rem;
+    --step-0: 1rem;
+    --step-1: 1.1875rem;
+    --step-2: 1.4375rem;
+    --step-3: 1.875rem;
+    --step-4: 2.625rem;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0C1211;
+      --surface: #131B1A;
+      --surface-2: #1B2524;
+      --ink: #E6EDEC;
+      --ink-2: #A2B1AF;
+      --ink-3: #7B8B89;
+      --rule: #293533;
+      --rule-strong: #3C4B49;
+      --accent: #46B8AF;
+      --accent-ink: #6FCFC6;
+      --accent-soft: #16302E;
+      --critical: #E8776A;
+      --critical-soft: #351C19;
+      --warning: #D9A24A;
+      --warning-soft: #33260F;
+      --good: #5CBF93;
+      --good-soft: #14301F;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0C1211;
+    --surface: #131B1A;
+    --surface-2: #1B2524;
+    --ink: #E6EDEC;
+    --ink-2: #A2B1AF;
+    --ink-3: #7B8B89;
+    --rule: #293533;
+    --rule-strong: #3C4B49;
+    --accent: #46B8AF;
+    --accent-ink: #6FCFC6;
+    --accent-soft: #16302E;
+    --critical: #E8776A;
+    --critical-soft: #351C19;
+    --warning: #D9A24A;
+    --warning-soft: #33260F;
+    --good: #5CBF93;
+    --good-soft: #14301F;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: var(--step-0);
+    line-height: 1.65;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  a { color: var(--accent-ink); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
+  /* ---------- shell ---------- */
+
+  .shell {
+    max-width: 1220px;
+    margin: 0 auto;
+    padding: 0 clamp(1.25rem, 4vw, 3rem);
+  }
+
+  .masthead {
+    border-bottom: 1px solid var(--rule);
+    padding: clamp(2.5rem, 6vw, 4.5rem) 0 clamp(1.75rem, 4vw, 2.75rem);
+    display: flex;
+    flex-direction: column;
+    gap: 1.5rem;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    margin: 0;
+  }
+
+  h1 {
+    font-family: var(--font-mono);
+    font-size: clamp(2rem, 5.5vw, var(--step-4));
+    line-height: 1.08;
+    letter-spacing: -0.02em;
+    font-weight: 600;
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .standfirst {
+    max-width: var(--measure);
+    font-size: var(--step-1);
+    color: var(--ink-2);
+    margin: 0;
+  }
+
+  .route {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.6rem 0.9rem;
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    color: var(--ink-2);
+  }
+  .route .node {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 0.3rem 0.6rem;
+    white-space: nowrap;
+  }
+  .route .node.built { border-color: var(--accent); color: var(--accent-ink); }
+  .route .arrow { color: var(--ink-3); }
+
+  /* ---------- body grid ---------- */
+
+  .layout {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 2.5rem;
+    padding: clamp(2rem, 5vw, 3.5rem) 0 6rem;
+  }
+  @media (min-width: 62rem) {
+    .layout { grid-template-columns: 15rem minmax(0, 1fr); gap: 4rem; }
+    .toc { position: sticky; top: 2rem; align-self: start; max-height: calc(100vh - 4rem); overflow-y: auto; }
+  }
+
+  .toc h2 {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin: 0 0 0.85rem;
+    padding-bottom: 0.6rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .toc ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.4rem; counter-reset: toc; }
+  .toc li { counter-increment: toc; font-size: var(--step--1); }
+  .toc a {
+    display: flex; gap: 0.6rem;
+    color: var(--ink-2); text-decoration: none;
+    font-family: var(--font-mono);
+    line-height: 1.4;
+  }
+  .toc a::before { content: counter(toc, decimal-leading-zero); color: var(--ink-3); flex: none; }
+  .toc a:hover { color: var(--accent-ink); }
+
+  main { min-width: 0; display: flex; flex-direction: column; gap: clamp(2.75rem, 6vw, 4rem); }
+
+  section { display: flex; flex-direction: column; gap: 1.15rem; scroll-margin-top: 2rem; }
+
+  h2.sec {
+    font-family: var(--font-mono);
+    font-size: var(--step-2);
+    letter-spacing: -0.01em;
+    font-weight: 600;
+    margin: 0;
+    padding-top: 1.25rem;
+    border-top: 2px solid var(--ink);
+    text-wrap: balance;
+  }
+  h3 {
+    font-family: var(--font-mono);
+    font-size: var(--step-0);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    margin: 0.75rem 0 0;
+    color: var(--ink);
+  }
+  h4 {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin: 0.5rem 0 0;
+  }
+
+  p, ul, ol { margin: 0; max-width: var(--measure); }
+  ul, ol { padding-left: 1.35rem; display: flex; flex-direction: column; gap: 0.5rem; }
+  li::marker { color: var(--ink-3); }
+  strong { font-weight: 650; }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.875em;
+    background: var(--surface-2);
+    border-radius: 2px;
+    padding: 0.1em 0.35em;
+  }
+
+  pre {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    border-radius: 2px;
+    padding: 1rem 1.15rem;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    line-height: 1.6;
+    color: var(--ink);
+    tab-size: 2;
+  }
+  pre code { background: none; padding: 0; font-size: 1em; }
+
+  /* ---------- callout ---------- */
+
+  .thesis {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    padding: 1.25rem 1.4rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+  .thesis p { max-width: 62ch; }
+  .thesis .eyebrow { color: var(--accent-ink); }
+
+  .note {
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--rule-strong);
+    background: var(--surface);
+    padding: 1rem 1.2rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+  .note.warn { border-left-color: var(--warning); background: var(--warning-soft); }
+  .note h4 { margin-top: 0; }
+
+  /* ---------- figures ---------- */
+
+  figure { margin: 0; display: flex; flex-direction: column; gap: 0.7rem; }
+  .figbox {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    padding: 1.5rem 1.25rem;
+    overflow-x: auto;
+  }
+  .figbox svg { display: block; min-width: 640px; width: 100%; height: auto; }
+  figcaption {
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    color: var(--ink-3);
+    max-width: var(--measure);
+  }
+
+  svg .box { fill: var(--surface); stroke: var(--rule-strong); stroke-width: 1; }
+  svg .box-accent { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.25; }
+  svg .band { fill: var(--surface-2); stroke: var(--rule); stroke-width: 1; }
+  svg .lbl { fill: var(--ink); font-family: var(--font-mono); font-size: 12px; font-weight: 600; }
+  svg .sub { fill: var(--ink-3); font-family: var(--font-mono); font-size: 10px; }
+  svg .num { fill: var(--accent-ink); font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
+  svg .flow { stroke: var(--rule-strong); stroke-width: 1.25; fill: none; }
+  svg .flow-bad { stroke: var(--critical); stroke-width: 1.25; fill: none; stroke-dasharray: 4 3; }
+  svg .flow-lbl { fill: var(--ink-3); font-family: var(--font-mono); font-size: 9.5px; }
+  svg .flow-lbl-bad { fill: var(--critical); font-family: var(--font-mono); font-size: 9.5px; }
+  svg .st-good { fill: var(--good-soft); stroke: var(--good); stroke-width: 1.25; }
+  svg .st-bad { fill: var(--critical-soft); stroke: var(--critical); stroke-width: 1.25; }
+  svg .st-wait { fill: var(--warning-soft); stroke: var(--warning); stroke-width: 1.25; }
+
+  /* ---------- tables ---------- */
+
+  .tablewrap {
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    border-radius: 2px;
+    background: var(--surface);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    min-width: 780px;
+    font-size: var(--step--1);
+    font-variant-numeric: tabular-nums;
+  }
+  caption {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    padding-bottom: 0.6rem;
+  }
+  thead th {
+    text-align: left;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--rule-strong);
+    background: var(--surface-2);
+    white-space: nowrap;
+  }
+  tbody td { padding: 0.7rem 0.85rem; border-bottom: 1px solid var(--rule); vertical-align: top; line-height: 1.5; }
+  tbody tr:last-child td { border-bottom: none; }
+  tbody th {
+    text-align: left;
+    font-weight: 600;
+    padding: 0.7rem 0.85rem;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: top;
+    font-family: var(--font-mono);
+    font-size: 0.8125rem;
+    line-height: 1.45;
+    min-width: 13rem;
+  }
+  tbody tr:last-child th { border-bottom: none; }
+
+  .pill {
+    display: inline-block;
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 0.15rem 0.45rem;
+    border-radius: 2px;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .p-retry { background: var(--good-soft); color: var(--good); }
+  .p-halt { background: var(--critical-soft); color: var(--critical); }
+  .p-quar { background: var(--warning-soft); color: var(--warning); }
+  .p-info { background: var(--surface-2); color: var(--ink-2); }
+
+  /* ---------- stage list ---------- */
+
+  .stages { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0; max-width: none; counter-reset: st; border-top: 1px solid var(--rule); }
+  .stages > li {
+    counter-increment: st;
+    display: grid;
+    grid-template-columns: 2.5rem minmax(0, 1fr);
+    gap: 0 1rem;
+    padding: 1.15rem 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .stages > li::before {
+    content: counter(st, decimal-leading-zero);
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    font-weight: 700;
+    color: var(--accent-ink);
+    padding-top: 0.15rem;
+  }
+  .stages .body { display: flex; flex-direction: column; gap: 0.45rem; }
+  .stages h3 { margin: 0; }
+
+  /* ---------- phases ---------- */
+
+  .phases { list-style: none; padding: 0; margin: 0; display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); max-width: none; }
+  .phases li { background: var(--surface); padding: 1.1rem 1.2rem; display: flex; flex-direction: column; gap: 0.4rem; }
+  .phases .ph {
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--accent-ink);
+    font-weight: 700;
+  }
+  .phases strong { font-size: var(--step-0); font-family: var(--font-mono); font-weight: 600; }
+  .phases p { font-size: var(--step--1); color: var(--ink-2); max-width: 60ch; }
+  @media (min-width: 45rem) { .phases { grid-template-columns: 1fr 1fr; } }
+
+  .qs { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 1rem; max-width: none; counter-reset: q; }
+  .qs li { counter-increment: q; display: grid; grid-template-columns: 2rem minmax(0, 1fr); gap: 0.75rem; }
+  .qs li::before { content: "Q" counter(q); font-family: var(--font-mono); font-size: var(--step--1); font-weight: 700; color: var(--ink-3); padding-top: 0.2rem; }
+  .qs .body { display: flex; flex-direction: column; gap: 0.3rem; }
+  .qs .body > span:first-child { font-weight: 600; }
+  .qs .body > span:last-child { font-size: var(--step--1); color: var(--ink-2); }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding: 1.75rem 0 3rem;
+    font-family: var(--font-mono);
+    font-size: var(--step--1);
+    color: var(--ink-3);
+  }
+</style>
+
+<div class="shell">
+  <header class="masthead">
+    <p class="eyebrow">Integration design · Matrix COSEC → ZingHR · rev 4</p>
+    <h1>Punch to Payroll</h1>
+    <p class="standfirst">One day's swipes per night, each sent exactly once. Recovery comes from a ledger that remembers what succeeded rather than from re-sending — which costs a little state and buys back everything the trailing window was doing for free.</p>
+    <div class="route">
+      <span class="node">COSEC · GET · Basic auth</span>
+      <span class="arrow">→</span>
+      <span class="node built">Ledger · day + swipe state</span>
+      <span class="arrow">→</span>
+      <span class="node">ZingHR · JWT (2 min) · POST</span>
+    </div>
+  </header>
+
+  <div class="layout">
+    <nav class="toc" aria-label="Contents">
+      <h2>Contents</h2>
+      <ol>
+        <li><a href="#trade">The trade</a></li>
+        <li><a href="#reread">Re-read is not re-send</a></li>
+        <li><a href="#ledger">The ledger</a></li>
+        <li><a href="#run">The nightly run</a></li>
+        <li><a href="#states">State machines</a></li>
+        <li><a href="#retry">Retry policy</a></li>
+        <li><a href="#dupes">The ambiguous timeout</a></li>
+        <li><a href="#failures">Failure handling</a></li>
+        <li><a href="#code">Code shape &amp; config</a></li>
+        <li><a href="#build">Build order</a></li>
+      </ol>
+    </nav>
+
+    <main>
+      <section id="trade">
+        <h2 class="sec">1 · The trade</h2>
+        <p>An earlier revision bought crash-recovery, missed-run recovery and late-arrival coverage from a single mechanism: re-send a trailing window every night and let ZingHR absorb the duplicates. Dropping that is the right call — it was paying for our convenience with sevenfold write amplification in someone else's payroll tables, indefinitely — but it was doing real work, and that work has to move somewhere.</p>
+
+        <div class="thesis">
+          <p class="eyebrow">The design in one line</p>
+          <p><strong>State is the price of not re-sending.</strong> To send each swipe exactly once, the system has to remember which ones it has already sent — so a durable ledger stops being optional. What that buys back is precision: recovery re-sends only what genuinely failed, instead of a week of data that mostly succeeded.</p>
+          <p>On a normal night, <strong>exactly one day's swipes are sent, each exactly once.</strong> Nothing is re-sent unless it demonstrably did not land.</p>
+        </div>
+
+        <p>Two levels of granularity make that work. A <strong>day job</strong> tracks whether an attendance date has been fully delivered, so a night the server was down is picked up tomorrow rather than lost. A <strong>per-swipe record</strong> tracks individual delivery, so a retry re-sends the three rejected rows rather than the four thousand that were fine. The second level is what keeps duplicates near zero — retry at day granularity would re-send an entire day to fix one record.</p>
+      </section>
+
+      <section id="reread">
+        <h2 class="sec">2 · Re-read is not re-send</h2>
+        <p>Dropping the trailing window removes the only mechanism that caught late-arriving swipes — a terminal that loses its network link, buffers locally, and uploads days later. Those swipes carry an old <code>swipeDateTime</code>, so a job that fetches only yesterday will never see them, and <strong>nothing will error</strong>, because you never learn they exist.</p>
+        <p>The resolution is that these are two different operations, and only one of them was ever the problem:</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th scope="col">Operation</th><th scope="col">Cost</th><th scope="col">Do it</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">Re-read a day from COSEC</th><td>A LAN request to a server on the same premises. A few MB. Nobody's data is touched.</td><td><span class="pill p-retry">freely</span></td></tr>
+              <tr><th scope="row">Re-send a day to ZingHR</th><td>Rows accumulating permanently in a third party's payroll database.</td><td><span class="pill p-halt">never, unless it failed</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <p>So keep the sweep and drop the amplification. Each night, after handling yesterday, <strong>re-fetch the previous several days from COSEC and insert into the ledger with insert-or-ignore</strong> on <code>(terminal_id, unique_id)</code>. Rows already there collapse to a no-op. Anything genuinely new — the back-filled buffer from an offline terminal — lands as <code>pending</code> and goes out on the same run.</p>
+
+        <p>On a typical night this sweep inserts nothing and sends nothing. When a terminal has been down, it sends exactly the swipes that were missing and not one more. That is strictly better than both alternatives: full late-arrival coverage, zero duplicate sends.</p>
+
+        <div class="note">
+          <h4>This is what the ledger is for</h4>
+          <p>Note that the sweep is only possible <em>because</em> there is local state. Without a record of what has been seen, the only way to be sure a late swipe gets delivered is to re-send the window blindly. The ledger is what lets aggressive re-reading coexist with minimal writing — the two requirements that looked contradictory.</p>
+        </div>
+      </section>
+
+      <section id="ledger">
+        <h2 class="sec">3 · The ledger</h2>
+        <p>SQLite in WAL mode, single file on the same box. Two tables carry the design; the third is audit.</p>
+
+        <pre><code>sync_day
+  attendance_date   TEXT PK    -- "2026-08-19"
+  state             TEXT       -- pending|staged|publishing|complete|stalled
+  fetch_attempts    INTEGER
+  last_fetched_at   INTEGER
+  cosec_count       INTEGER    -- rows COSEC reported for this date
+  sent_count        INTEGER
+  quarantined_count INTEGER
+  last_error        TEXT
+  created_at, completed_at
+
+swipe_event
+  id                INTEGER PK
+  attendance_date   TEXT       -- FK to sync_day
+  terminal_id       TEXT
+  unique_id         TEXT
+  emp_identification TEXT      -- one of the two fields ZingHR uses
+  swipe_datetime    TEXT       -- the other; passed through verbatim
+  payload_json      TEXT       -- exactly what we POST
+  state             TEXT       -- pending|in_flight|sent|quarantined|abandoned
+  attempts          INTEGER    -- record-scoped failures ONLY (see §6)
+  ambiguous_count   INTEGER    -- sends that ended in an unknown outcome (§7)
+  next_attempt_at   INTEGER
+  last_error        TEXT
+  created_at, sent_at
+  UNIQUE (terminal_id, unique_id)      -- makes re-reading idempotent
+  INDEX (state, next_attempt_at)
+  INDEX (attendance_date, state)
+
+run_log
+  id, started_at, finished_at, outcome,
+  days_processed, fetched, sent, rejected, ambiguous, correlation_id</code></pre>
+
+        <p>Three notes on the shape:</p>
+        <ul>
+          <li><strong>The unique constraint is what makes §2 safe.</strong> Re-reading a day repeatedly is a no-op at the database level, with no application logic to get wrong. Scope it on <code>(terminal_id, unique_id)</code> rather than <code>unique_id</code> alone — <code>"1212"</code> looks like a per-device sequence, and keying on it alone would silently discard real swipes from other terminals as duplicates.</li>
+          <li><strong>No lease columns.</strong> An earlier revision needed lease TTLs because publishers could run concurrently. Here runs are nightly and a lock file guarantees one at a time, so crash recovery is simply <em>reset every <code>in_flight</code> row to <code>pending</code> at run start</em>. One statement instead of a lease protocol.</li>
+          <li><strong>Keep <code>cosec_count</code>.</strong> It is what lets the daily report assert that what COSEC held for a date matches what was delivered, rather than assuming it.</li>
+        </ul>
+      </section>
+
+      <section id="run">
+        <h2 class="sec">4 · The nightly run</h2>
+        <pre><code>nightly at 00:30, under a lock file:
+
+  0  reclaim:  UPDATE swipe_event SET state='pending'
+               WHERE state='in_flight'          // crash recovery
+
+  1  ensureDay(yesterday)                        // create job if absent
+
+  2  days = sync_day WHERE state != 'complete'
+         ORDER BY attendance_date ASC            // oldest first
+     for each day:
+       if state == 'pending':
+            rows = cosec.fetch(day)              // retry per §6
+            insertOrIgnore(rows)                 // dedupe on (terminal, uid)
+            day.cosec_count = rows.length
+            day.state = 'staged'
+
+  3  sweep: for d in [yesterday-1 .. yesterday-SWEEP_DAYS]:
+            rows = cosec.fetch(d)                // cheap, LAN
+            insertOrIgnore(rows)                 // normally inserts nothing
+
+  4  publish: batches of pending/retry-eligible swipes, oldest day first
+       for each batch, strictly serially:
+            token = zinghr.authenticate()        // fresh; 2-min TTL
+            res   = zinghr.post(batch, token)
+            assertBodySaysSuccess(res)           // never trust 200 alone
+            markOutcomes(batch, res)             // per record
+
+  5  settle: day.state = 'complete' when no swipe for that date
+             is still pending or in_flight
+             day.state = 'stalled' if incomplete for STALL_DAYS
+
+  6  write run_log · ping heartbeat · email report</code></pre>
+
+        <p>Step 2 is where missed-run recovery lives. Because incomplete days stay in the table and are selected oldest-first, a night the server was down is simply processed the following night alongside the new day — without re-sending anything that already succeeded.</p>
+
+        <div class="note">
+          <h4>Bound the catch-up</h4>
+          <p>If the job has been dead for three weeks, step 2 will try to process twenty-one days in one run, which can blow past the run window and hammer both APIs. Cap days-per-run at a configurable limit — oldest first, so it drains steadily over successive nights — and alert as soon as the backlog exists rather than when it clears.</p>
+        </div>
+      </section>
+
+      <section id="states">
+        <h2 class="sec">5 · State machines</h2>
+        <figure>
+          <div class="figbox">
+            <svg viewBox="0 0 880 330" role="img" aria-label="Two state machines: the day job lifecycle above, and the per-swipe record lifecycle below.">
+              <text class="sub" x="14" y="18">DAY JOB</text>
+              <g>
+                <rect class="box-accent" x="14" y="34" width="120" height="46" rx="2"/>
+                <text class="lbl" x="30" y="55">PENDING</text>
+                <text class="sub" x="30" y="70">not yet fetched</text>
+              </g>
+              <g>
+                <rect class="box" x="198" y="34" width="120" height="46" rx="2"/>
+                <text class="lbl" x="214" y="55">STAGED</text>
+                <text class="sub" x="214" y="70">rows in ledger</text>
+              </g>
+              <g>
+                <rect class="box" x="382" y="34" width="120" height="46" rx="2"/>
+                <text class="lbl" x="398" y="55">PUBLISHING</text>
+                <text class="sub" x="398" y="70">draining</text>
+              </g>
+              <g>
+                <rect class="st-good" x="566" y="34" width="120" height="46" rx="2"/>
+                <text class="lbl" x="582" y="55">COMPLETE</text>
+                <text class="sub" x="582" y="70">all settled</text>
+              </g>
+              <g>
+                <rect class="st-bad" x="750" y="34" width="116" height="46" rx="2"/>
+                <text class="lbl" x="766" y="55">STALLED</text>
+                <text class="sub" x="766" y="70">alert a human</text>
+              </g>
+              <path class="flow" d="M134 57 H194" marker-end="url(#d1)"/>
+              <path class="flow" d="M318 57 H378" marker-end="url(#d1)"/>
+              <path class="flow" d="M502 57 H562" marker-end="url(#d1)"/>
+              <path class="flow-bad" d="M686 57 H746" marker-end="url(#d1b)"/>
+              <text class="flow-lbl-bad" x="640" y="98">incomplete for STALL_DAYS</text>
+              <path class="flow" d="M74 80 V104 H444 V80" marker-end="url(#d1)"/>
+              <text class="flow-lbl" x="176" y="118">fetch failed → retried next run, nothing lost</text>
+
+              <path class="flow" d="M14 150 H866" stroke-dasharray="2 4"/>
+              <text class="sub" x="14" y="176">PER-SWIPE RECORD</text>
+
+              <g>
+                <rect class="box-accent" x="14" y="196" width="120" height="46" rx="2"/>
+                <text class="lbl" x="30" y="217">PENDING</text>
+                <text class="sub" x="30" y="232">ready to send</text>
+              </g>
+              <g>
+                <rect class="box" x="238" y="196" width="120" height="46" rx="2"/>
+                <text class="lbl" x="254" y="217">IN_FLIGHT</text>
+                <text class="sub" x="254" y="232">in a live batch</text>
+              </g>
+              <g>
+                <rect class="st-good" x="462" y="196" width="120" height="46" rx="2"/>
+                <text class="lbl" x="478" y="217">SENT</text>
+                <text class="sub" x="478" y="232">acked, terminal</text>
+              </g>
+              <g>
+                <rect class="st-wait" x="238" y="272" width="120" height="46" rx="2"/>
+                <text class="lbl" x="254" y="293">QUARANTINED</text>
+                <text class="sub" x="254" y="308">rejected, retried</text>
+              </g>
+              <g>
+                <rect class="st-bad" x="462" y="272" width="140" height="46" rx="2"/>
+                <text class="lbl" x="478" y="293">ABANDONED</text>
+                <text class="sub" x="478" y="308">gave up · reported</text>
+              </g>
+              <path class="flow" d="M134 219 H234" marker-end="url(#d1)"/>
+              <text class="flow-lbl" x="150" y="212">batched</text>
+              <path class="flow" d="M358 219 H458" marker-end="url(#d1)"/>
+              <text class="flow-lbl" x="374" y="212">ack ok</text>
+              <path class="flow-bad" d="M298 242 V268" marker-end="url(#d1b)"/>
+              <text class="flow-lbl-bad" x="306" y="262">rejected</text>
+              <path class="flow" d="M238 295 H180 V242" marker-end="url(#d1)"/>
+              <text class="flow-lbl" x="120" y="268">nightly retry</text>
+              <path class="flow-bad" d="M358 295 H458" marker-end="url(#d1b)"/>
+              <text class="flow-lbl-bad" x="366" y="288">after N days</text>
+              <path class="flow" d="M298 196 V170 H180 V196" marker-end="url(#d1)"/>
+              <text class="flow-lbl" x="192" y="166">crash · ambiguous · transient → back to PENDING</text>
+
+              <defs>
+                <marker id="d1" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+                  <path d="M0 0 L8 4 L0 8 z" fill="context-stroke"/>
+                </marker>
+                <marker id="d1b" viewBox="0 0 8 8" refX="6" refY="4" markerWidth="6" markerHeight="6" orient="auto">
+                  <path d="M0 0 L8 4 L0 8 z" fill="context-stroke"/>
+                </marker>
+              </defs>
+            </svg>
+          </div>
+          <figcaption>The day job answers "has this date been delivered?"; the record answers "has this swipe been delivered?". Recovery reads the second, which is why a retry re-sends three rows rather than a whole day.</figcaption>
+        </figure>
+
+        <p>The <code>quarantined → pending</code> edge is worth calling out, because it handles the most common rejection without any intervention. A new joiner is enrolled on the biometric device before HR creates their master record, so their swipes are rejected as an unknown employee. Retrying nightly means those swipes deliver themselves the day HR fixes the master — no dead-letter queue, no replay tooling, no ticket.</p>
+      </section>
+
+      <section id="retry">
+        <h2 class="sec">6 · Retry policy</h2>
+        <p>Retries operate at whichever scope the failure actually belongs to. Getting this wrong is what turns one bad afternoon into a queue full of good records marked failed.</p>
+
+        <div class="tablewrap">
+          <table>
+            <thead><tr><th scope="col">Failure</th><th scope="col">Scope</th><th scope="col">Policy</th></tr></thead>
+            <tbody>
+              <tr><th scope="row">COSEC unreachable or timing out</th><td><span class="pill p-info">day</span></td><td>3 attempts, jittered backoff. Then leave the day <code>pending</code> — tomorrow's run retries it. Nothing is lost and nothing needs a human.</td></tr>
+              <tr><th scope="row">COSEC returns malformed or truncated data</th><td><span class="pill p-info">day</span></td><td>Do not stage a partial day. If the row count hits a suspiciously round number, treat it as capped and page or narrow the range. Staging a truncated day then marking it complete is the one way this design still loses data silently.</td></tr>
+              <tr><th scope="row">ZingHR auth fails</th><td><span class="pill p-halt">run</span></td><td>3 attempts, then abort the run — every batch needs a token, so there is nothing useful to continue with. Days stay incomplete and retry tomorrow. Alert, since a rotated secret or expired client credential needs a human either way.</td></tr>
+              <tr><th scope="row">Connect-phase failure — DNS, TLS, connection refused</th><td><span class="pill p-retry">batch</span></td><td><strong>Safe to retry freely.</strong> The request never reached ZingHR, so there is no duplicate risk. Distinguishing this from the case below is worth the plumbing — see §7.</td></tr>
+              <tr><th scope="row">5xx with a response body</th><td><span class="pill p-retry">batch</span></td><td>Server answered and declined. 3 attempts with full jitter — <code>random(0, min(cap, base·2ⁿ))</code> — then leave the records <code>pending</code> for tomorrow. No duplicate risk; the response tells you it was not processed.</td></tr>
+              <tr><th scope="row">Response-phase failure — timeout or reset after the request was sent</th><td><span class="pill p-quar">batch</span></td><td><strong>Ambiguous.</strong> Outcome genuinely unknown. Handled separately in §7, not by this ladder.</td></tr>
+              <tr><th scope="row">POST returns 401</th><td><span class="pill p-retry">batch</span></td><td>Re-authenticate and retry once. If a fresh token is also rejected, stop — credentials or client config are wrong and retrying will not fix it.</td></tr>
+              <tr><th scope="row">POST returns 429</th><td><span class="pill p-retry">batch</span></td><td>Honour <code>Retry-After</code>, then backoff. Unlikely at one run a night, but free to handle.</td></tr>
+              <tr><th scope="row">Record rejected — unknown employee</th><td><span class="pill p-quar">record</span></td><td>Quarantine, retry once per night for <code>QUARANTINE_DAYS</code> (7 is reasonable), then abandon and report. Covers the new-joiner case automatically.</td></tr>
+              <tr><th scope="row">Record rejected — malformed or business-invalid</th><td><span class="pill p-halt">record</span></td><td>No retry; the same payload will be rejected identically. Quarantine and report immediately so it can be looked at while the context is fresh.</td></tr>
+              <tr><th scope="row">Whole batch rejected, offender unidentified</th><td><span class="pill p-quar">batch</span></td><td>Bisect — split and retry halves, recursing only into failing ones. Eight requests to isolate one bad record in 200. Only on permanent-classified failures, never transient.</td></tr>
+              <tr><th scope="row">Process crash mid-run</th><td><span class="pill p-retry">record</span></td><td>Next run resets <code>in_flight</code> to <code>pending</code>. Note this is itself an ambiguous case — the batch may have landed before the crash — so count it per §7.</td></tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="note warn">
+          <h4>Only count attempts against the record when it is the record's fault</h4>
+          <p>The distinction that matters most here. A ZingHR outage is not a property of the payload — if a five-hour outage increments <code>attempts</code> on every record in every retried batch, an entire day of perfectly good swipes marches into <code>abandoned</code> and gets dropped from payroll, with the logs showing "max attempts exceeded" as though the data were bad.</p>
+          <p>So: <strong>batch- and run-scoped failures leave <code>attempts</code> untouched</strong> and return records to <code>pending</code>. Only a rejection naming that specific record increments it. The day-level <code>stalled</code> state is what escalates a sustained outage to a human, not the record counter.</p>
+        </div>
+      </section>
+
+      <section id="dupes">
+        <h2 class="sec">7 · The ambiguous timeout</h2>
+        <p>The design sends each swipe once. There is exactly one case it cannot eliminate: a POST is sent, the connection drops or times out before a response arrives, and there is no way to know whether ZingHR processed it. Retrying risks a duplicate; not retrying risks a permanent hole. No protocol between two parties can resolve this, so it is a choice about which error to prefer.</p>
+
+        <h3>Yes, they are retried — but on a different ladder</h3>
+        <p>An ambiguous batch goes back to <code>pending</code> and is retried, because a duplicate swipe is tolerated by ZingHR's pairing logic while a missing swipe is an employee short on hours. Prefer the harmless error. But it must not ride the ordinary retry ladder, for a reason that is easy to miss:</p>
+
+        <div class="note warn">
+          <h4>Each retry can itself end ambiguously</h4>
+          <p>If ZingHR is degraded rather than down, an ambiguous timeout is likely to be followed by another. Run three backoff attempts and each may have landed — <strong>you can produce four copies of the same swipe while believing you sent none.</strong> The ordinary ladder assumes a failed attempt did nothing, which is precisely what is not known here, so applying it multiplies the harm it is meant to contain.</p>
+        </div>
+
+        <p>So the policy is deliberately timid:</p>
+        <ul>
+          <li><strong>One immediate retry, then stop for the night.</strong> If that also ends ambiguously, return the records to <code>pending</code> and let tomorrow's run handle them. A day sitting incomplete for 24 hours costs nothing; four copies in payroll costs a conversation.</li>
+          <li><strong>Increment <code>ambiguous_count</code>, not <code>attempts</code>.</strong> The record is not at fault, so it must not march toward <code>abandoned</code> (§6). But the count needs to exist, because it is the only visibility into how many possible duplicates have been created.</li>
+          <li><strong>Shrink the batch on the retry.</strong> Retrying a 200-record batch risks 200 duplicates; splitting it first bounds the blast radius, and a smaller request is likelier to complete against a struggling server.</li>
+          <li><strong>Report every one, and alert on clusters.</strong> A handful a year is the cost of doing business over a network. A dozen in a week is a network or capacity problem worth finding, and the log is what makes it findable.</li>
+        </ul>
+
+        <h3>Most "timeouts" are not actually ambiguous</h3>
+        <p>Worth the plumbing, because it shrinks this whole category: <strong>a failure before the request was sent carries no duplicate risk at all.</strong> DNS failure, connection refused, TLS handshake failure — ZingHR never saw it, so retry freely on the normal ladder. Only a failure while awaiting a response is genuinely unknown.</p>
+        <p>Set <strong>separate connect and response timeouts</strong> rather than one overall deadline, so the two are distinguishable at the point of failure. Undici exposes <code>connectTimeout</code>, <code>headersTimeout</code> and <code>bodyTimeout</code> separately for exactly this. With a single combined timeout you cannot tell which happened and must pessimistically treat everything as ambiguous — which is how a design ends up creating duplicates it never needed to.</p>
+
+        <div class="note">
+          <h4>The ambiguity can sometimes be resolved rather than guessed</h4>
+          <p>If ZingHR exposes any endpoint to read back swipes for an employee and date, the guess disappears: query before retrying, and the outcome becomes known. Their API surface has not been explored beyond auth and sync, so this is worth asking about — it converts the one unavoidable defect in this design into a solved problem, and it is cheap to use at the volume involved (only after an ambiguous failure, which should be rare).</p>
+        </div>
+
+        <p>Everything else is genuinely once-only: crash recovery re-sends only records never acknowledged, day retries re-send only what is still pending, and the §2 sweep sends only rows that were not already in the ledger. <strong>This is what "occasional duplicates" was always meant to describe</strong> — a rare unavoidable race, bounded and counted, not a scheduled weekly re-send.</p>
+      </section>
+
+      <section id="failures">
+        <h2 class="sec">8 · Failure handling</h2>
+        <p>Beyond the retry table, four things still need handling — none of them affected by the single-day scope change.</p>
+        <ul>
+          <li><strong>200 OK with a failure body.</strong> Still the most dangerous case and the least visible. HRMS APIs routinely return 200 for business rejections, so parse the body and derive outcome from it — a run reporting success while payroll received nothing is what you would discover at cutoff. This matters more without a trailing window, not less: a false "sent" here means the record is marked delivered in the ledger and <em>never retried</em>, where a nightly re-send would have papered over it. Capture the real error shape on UAT by sending a deliberately bad record.</li>
+          <li><strong>An external dead-man's switch.</strong> A nightly job can be dead for a fortnight before anyone notices. Ping a heartbeat URL on success and let an outside watcher alert when the ping stops — internal monitoring cannot detect its own absence.</li>
+          <li><strong>Explicit timeouts on every call.</strong> Node has no default request timeout, so an unset one hangs forever, and a job hung since 00:30 is indistinguishable from one that never ran. Set them per-phase, per §7.</li>
+          <li><strong>The client secret's configurable expiry.</strong> Whatever it is set to, it is a date on which this stops working with an auth error and no other warning. Set it as long as policy permits, record the date where a human will see it, and name it as a likely cause in the auth-failure alert.</li>
+        </ul>
+
+        <h3>The daily report</h3>
+        <p>One email per run, sent whether or not anything went wrong — at one run a day, silence is exactly what a dead job looks like. Per day processed: COSEC count, sent, quarantined. Plus any stalled days, the quarantine list with ages, abandoned records, <strong>ambiguous sends with their running counts</strong>, and run duration.</p>
+
+        <p>The alerts worth interrupting someone for are narrow: <strong>no successful run in over 24 hours</strong>, <strong>a day stalled</strong> beyond its threshold, <strong>auth failure</strong> on either side, <strong>any record abandoned</strong> — the only path by which a swipe is permanently not delivered — and <strong>a cluster of ambiguous sends</strong>, which is the early warning for a network problem that will otherwise show up as mysterious duplicates.</p>
+      </section>
+
+      <section id="code">
+        <h2 class="sec">9 · Code shape &amp; config</h2>
+        <p>TypeScript, <code>undici</code> for per-phase timeouts, <code>zod</code> at both boundaries, <code>better-sqlite3</code> for the ledger (synchronous and transactional, no pool to reason about), <code>pino</code> with credential redaction from the first commit. Still no queue and no broker.</p>
+
+        <p>Publishing stays <strong>strictly serial</strong>: the JWT lives two minutes and issuing a new one invalidates the previous, so two concurrent batches would void each other's tokens and produce 401s that depend on timing. Authenticate immediately before each POST and use the token once — at a two-minute TTL, cache-and-refresh logic compares their <code>exp</code> against your clock, where a minute of drift is half the budget.</p>
+
+        <pre><code>src/
+  config.ts        zod-validated env; exits non-zero on bad config
+  db/
+    migrations/    forward-only
+    repo.ts        typed queries, state transitions, insert-or-ignore
+  cosec.ts         day fetch, paging, truncation detection
+  zinghr.ts        authenticate() + post(); one token per batch
+  transform.ts     swipe -> { empIdentification, swipeDateTime }
+  run/
+    reclaim.ts  stage.ts  sweep.ts  publish.ts  settle.ts
+    index.ts       orchestration, lock file
+  retry.ts         classify() incl. connect-vs-response phase (§7),
+                   jittered backoff, bisection
+  report.ts        daily email, heartbeat ping
+  cli.ts           replay quarantine, re-open a day, dry-run, inspect
+test/
+  fixtures/        recorded real COSEC + ZingHR responses
+  fault/           200-with-failure-body, 401 mid-run, COSEC timeout,
+                   truncated page, crash mid-batch, unmapped employee,
+                   late-arriving swipe reaching a completed day,
+                   response-phase timeout (assert ONE retry, not three)</code></pre>
+
+        <pre><code>COSEC_BASE_URL, COSEC_USERNAME, COSEC_PASSWORD
+COSEC_TIMEOUT_MS=30000
+ZINGHR_AUTH_URL, ZINGHR_SYNC_URL, ZINGHR_CLIENT_CODE
+ZINGHR_USERNAME, ZINGHR_PASSWORD
+ZINGHR_CONNECT_TIMEOUT_MS=5000    # separate phases so ambiguity is
+ZINGHR_HEADERS_TIMEOUT_MS=30000   # detectable rather than assumed (§7)
+ZINGHR_BODY_TIMEOUT_MS=30000
+
+SCHEDULE="30 0 * * *"
+SWEEP_DAYS=5             # re-READ only; sends only genuinely new rows (§2)
+MAX_DAYS_PER_RUN=5       # bound catch-up after a long outage
+BATCH_SIZE=200           # must POST within the 2-min token
+CONCURRENCY=1            # hard constraint, not a tuning knob
+
+MAX_ATTEMPTS=5           # per-record, record-scoped failures only
+AMBIGUOUS_RETRIES=1      # per run; then defer to tomorrow (§7)
+AMBIGUOUS_ALERT_AT=5     # cluster threshold for alerting
+QUARANTINE_DAYS=7        # nightly retry before abandoning
+STALL_DAYS=3             # day incomplete this long -> alert
+BACKOFF_BASE_MS=1000     BACKOFF_CAP_MS=60000
+
+HEARTBEAT_URL=...        REPORT_EMAIL_TO=...
+DRY_RUN=false            ENVIRONMENT=uat|production
+AUDIT_RETENTION_DAYS=90  LOG_LEVEL=info</code></pre>
+      </section>
+
+      <section id="build">
+        <h2 class="sec">10 · Build order</h2>
+        <ol class="phases">
+          <li><span class="ph">Phase 1 · days 1–3</span><strong>Ledger and happy path</strong><p>Migrations, both state machines, and one day flowing end to end with no retry logic. Prove the two-field mapping and the round trip against UAT.</p></li>
+          <li><span class="ph">Phase 2 · days 4–6</span><strong>Retry layer</strong><p>Error classification including the connect-vs-response split, the scope rules from §6, backoff, quarantine with nightly re-drive, bisection. The scope distinction — batch failures must not increment record counters — deserves a test of its own, since getting it wrong is invisible until an outage.</p></li>
+          <li><span class="ph">Phase 3 · week 2</span><strong>Sweep and recovery</strong><p>The §2 re-read sweep, crash reclaim, bounded catch-up. Test by unplugging a terminal, swiping on it, reconnecting after the day is marked complete, and confirming the swipe reaches ZingHR without anything else being re-sent.</p></li>
+          <li><span class="ph">Phase 4 · week 2–3</span><strong>Operability</strong><p>Daily report, alerts, heartbeat, CLI. Not polish — it is what makes this supportable by someone who is not you.</p></li>
+          <li><span class="ph">Phase 5 · week 3</span><strong>Shadow run</strong><p>Production COSEC with <code>DRY_RUN=true</code> for a full pay cycle. Employee-mapping churn and volume surprises appear here rather than in a payroll run.</p></li>
+        </ol>
+
+        <h3>Three things to confirm on UAT before Phase 2</h3>
+        <ol class="qs">
+          <li><div class="body"><span>Does the sync endpoint report per-element results, or one verdict for the whole array?</span><span>Still open from your Q10, and it now matters more than it did — per-record state is only as precise as the feedback it can act on. One verdict per array makes bisection mandatory rather than a fallback.</span></div></li>
+          <li><div class="body"><span>What do rejections actually look like — status codes and body shape?</span><span>Your Q13. The whole retry policy classifies on this, so send a bad employee code and a malformed record deliberately and record exactly what comes back.</span></div></li>
+          <li><div class="body"><span>Is there any endpoint to read back swipes already recorded for an employee and date?</span><span>New, and worth asking: it would let an ambiguous send be resolved by querying rather than guessing, removing the one unavoidable source of duplicates in this design (§7). Only needed after a rare failure, so the call volume is negligible.</span></div></li>
+        </ol>
+      </section>
+    </main>
+  </div>
+
+  <footer>
+    Design document rev 4 · Matrix COSEC → ZingHR swipe sync · 25 August 2026
+  </footer>
+</div>
