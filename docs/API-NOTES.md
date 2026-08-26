@@ -53,6 +53,23 @@ confirming against the live UAT tenant.
 
 `data` is null on success; the failure shape is still unobserved.
 
+**Unknown employee codes are accepted.** A swipe for
+`ZZ_NOT_A_REAL_EMPLOYEE_9999` returns `code: 1`. ZingHR performs no
+existence check on `empIdentification`.
+
+Scope decision (2026-08-26): this is not the middleware's concern. Our
+contract is delivery — every COSEC swipe accepted with `code: 1` — and what
+ZingHR does with a code it does not recognise is theirs to own. Consequences:
+
+- Quarantine-and-retry stays in the code but will rarely fire. It existed
+  mostly for the new-joiner case, which now cannot be detected.
+- Client-side validation is the ONLY content guard. Since ZingHR rejects
+  solely on structure, and transform.ts enforces exactly those rules,
+  a `code: 0` should be near-impossible in production. Bisection becomes a
+  defensive fallback rather than routine machinery.
+- Reconciliation reports counts delivered, not employee validity — we have
+  no signal for the latter and must not imply one.
+
 ## Consequences for the design
 
 1. **`Code`, not HTTP status, decides success.** Exactly the 200-with-failure-body
