@@ -19,12 +19,30 @@ import type { ZingSwipe } from './types.ts';
 /** Hard server-side cap, documented. Batches must never exceed it. */
 export const MAX_SWIPES_PER_CALL = 5000;
 
+/**
+ * The live API returns camelCase (`code`/`message`/`data`) while the PDF
+ * documents PascalCase (`Code`/`Message`/`Data`). Rather than bet on either,
+ * top-level keys are lowercased before validation so both shapes — and any
+ * future drift in casing — parse identically.
+ */
 const EnvelopeSchema = z.object({
-  Message: z.string().optional().default(''),
+  message: z.string().nullish().transform((v) => v ?? ''),
   // Defensive: some gateways stringify numerics.
-  Code: z.union([z.number(), z.string()]).transform((v) => Number(v)),
-  Data: z.unknown().optional(),
+  code: z.union([z.number(), z.string()]).transform((v) => Number(v)),
+  data: z.unknown().optional(),
+  // Observed on live responses, absent from the docs. Captured for support
+  // traceability — if it is ever populated it is the server's own handle on
+  // the call, which is exactly what you want when querying a missing swipe.
+  transactionid: z.unknown().optional(),
 });
+
+type Envelope = z.infer<typeof EnvelopeSchema>;
+
+function lowerKeys(o: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(o)) out[k.toLowerCase()] = v;
+  return out;
+}
 
 export class ZingAuthError extends Error {
   readonly status: number;
@@ -43,10 +61,10 @@ export type SyncVerdict =
   /** Over the 5000 cap — split and resend rather than bisect for a culprit. */
   | { kind: 'too_large'; messages: string[] };
 
-function messagesFrom(envelope: { Message: string; Data?: unknown }): string[] {
+function messagesFrom(envelope: Envelope): string[] {
   const out: string[] = [];
-  if (envelope.Message) out.push(envelope.Message);
-  const d = envelope.Data;
+  if (envelope.message) out.push(envelope.message);
+  const d = envelope.data;
   if (typeof d === 'string' && d) out.push(d);
   else if (Array.isArray(d)) out.push(...d.map((x) => (typeof x === 'string' ? x : JSON.stringify(x))));
   else if (d && typeof d === 'object') {
@@ -99,13 +117,13 @@ export class ZingHrClient {
     }
 
     const env = parseEnvelope(text, 'auth');
-    if (env.Code !== 1 || typeof env.Data !== 'string' || !env.Data) {
+    if (env.code !== 1 || typeof env.data !== 'string' || !env.data) {
       throw new ZingAuthError(
-        messagesFrom(env).join('; ') || `unexpected auth envelope (Code ${env.Code})`,
+        messagesFrom(env).join('; ') || `unexpected auth envelope (code ${env.code})`,
         res.statusCode,
       );
     }
-    return env.Data;
+    return env.data;
   }
 
   /**
@@ -157,14 +175,14 @@ export class ZingHrClient {
  */
 export function interpretSyncBody(text: string): SyncVerdict {
   const env = parseEnvelope(text, 'sync');
-  if (env.Code === 1) return { kind: 'accepted' };
+  if (env.code === 1) return { kind: 'accepted' };
 
   const messages = messagesFrom(env);
   if (messages.some((m) => TOO_LARGE.test(m))) return { kind: 'too_large', messages };
   return { kind: 'rejected', messages };
 }
 
-function parseEnvelope(text: string, what: string): z.infer<typeof EnvelopeSchema> {
+function parseEnvelope(text: string, what: string): Envelope {
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -172,7 +190,10 @@ function parseEnvelope(text: string, what: string): z.infer<typeof EnvelopeSchem
     // An HTML error page from a gateway, or a truncated body. Never guess.
     throw new ZingProtocolError(`${what}: response was not JSON: ${summarise(text)}`);
   }
-  const parsed = EnvelopeSchema.safeParse(json);
+  if (typeof json !== 'object' || json === null || Array.isArray(json)) {
+    throw new ZingProtocolError(`${what}: expected a JSON object: ${summarise(text)}`);
+  }
+  const parsed = EnvelopeSchema.safeParse(lowerKeys(json as Record<string, unknown>));
   if (!parsed.success) {
     throw new ZingProtocolError(
       `${what}: unrecognised response shape: ${summarise(text)}`,

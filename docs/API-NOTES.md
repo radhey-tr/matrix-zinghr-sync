@@ -39,6 +39,20 @@ complaint, none identifies which element failed:
 - `Swipes required`
 - `Maximum 5000 swipes are allowed at a time`
 
+## OBSERVED vs DOCUMENTED (UAT, 2026-08-26)
+
+The live envelope is **camelCase**, not the PascalCase the PDF specifies, and
+carries fields the docs never mention:
+
+    {"code":1,"totalEmployeeCount":null,"svg":0,"data":null,
+     "message":"Success","transactionID":null,"lastCachedAt":null,"cachedTill":null}
+
+Parsing therefore lowercases top-level keys before validating, so both shapes
+work. Treat the PDF as indicative, not authoritative — everything in it wants
+confirming against the live UAT tenant.
+
+`data` is null on success; the failure shape is still unobserved.
+
 ## Consequences for the design
 
 1. **`Code`, not HTTP status, decides success.** Exactly the 200-with-failure-body

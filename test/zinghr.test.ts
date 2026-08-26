@@ -100,3 +100,37 @@ describe('client-side validation makes the documented errors unreachable', () =>
     assert.ok(!('terminalId' in out));
   });
 });
+
+describe('envelope casing — docs say PascalCase, the live API returns camelCase', () => {
+  // Captured verbatim from UAT on 2026-08-26. Keying off the documented casing
+  // would have thrown on every real call.
+  const LIVE_SUCCESS =
+    '{"code":1,"totalEmployeeCount":null,"svg":0,"data":null,"message":"Success",' +
+    '"transactionID":null,"lastCachedAt":null,"cachedTill":null}';
+
+  test('the real UAT success response is understood', () => {
+    assert.deepEqual(interpretSyncBody(LIVE_SUCCESS), { kind: 'accepted' });
+  });
+
+  test('the documented PascalCase shape still parses', () => {
+    assert.deepEqual(interpretSyncBody('{"Code":1,"Message":"Success","Data":null}'), {
+      kind: 'accepted',
+    });
+  });
+
+  test('a camelCase rejection keeps its validation detail', () => {
+    const v = interpretSyncBody(
+      '{"code":0,"message":"Failed","data":{"error":"SwipeDateTime is required"}}',
+    );
+    assert.equal(v.kind, 'rejected');
+    assert.ok(v.kind === 'rejected' && v.messages.some((m) => m.includes('SwipeDateTime')));
+  });
+
+  test('unknown extra fields do not break the parse', () => {
+    assert.equal(interpretSyncBody('{"code":1,"svg":0,"whatever":123}').kind, 'accepted');
+  });
+
+  test('a JSON array is refused rather than coerced', () => {
+    assert.throws(() => interpretSyncBody('[{"code":1}]'), ZingProtocolError);
+  });
+});
