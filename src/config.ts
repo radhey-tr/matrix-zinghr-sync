@@ -87,8 +87,12 @@ const ConfigSchema = z.object({
    * constraint — measured at 1200s, not the 2 minutes the docs imply. Rejections
    * carry element indices, so a bad record is identified without bisection and
    * batch size no longer drives failure-attribution cost either.
+   *
+   * At a production ~20k swipes/day this means ~20 POSTs per run. Raising it
+   * toward the cap is safe; the reason to keep some headroom is that a
+   * batch-scoped rejection carrying no index still falls back to bisection.
    */
-  BATCH_SIZE: z.coerce.number().int().min(1).max(5000).default(500),
+  BATCH_SIZE: z.coerce.number().int().min(1).max(5000).default(1000),
   /**
    * A deliberate choice, not a constraint. Issuing a token does NOT invalidate
    * the previous one (verified on UAT), so concurrency would be safe — but at

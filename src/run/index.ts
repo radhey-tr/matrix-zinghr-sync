@@ -111,24 +111,40 @@ export async function runOnce(deps: RunDeps): Promise<RunSummary> {
     }
 
     // ---- sweep: re-READ recent days, send only what is genuinely new ------
+    // Fetched one day at a time rather than as a single range. COSEC does not
+    // paginate -- it returns the entire span in one response, measured at 31MB
+    // and ~200MB of heap for 158k rows -- so a multi-day range at production
+    // volume would be a large, all-or-nothing download. Per-day requests bound
+    // the memory, let one bad day fail without losing the rest, and make
+    // progress visible in the log.
     if (cfg.SWEEP_DAYS > 0) {
       const from = addDays(yesterday, -cfg.SWEEP_DAYS);
-      try {
-        const rows = await cosec.fetchRange(from, yesterday);
-        summary.sweptRows = rows.length;
-        const staged = mapRows(rows, shape, summary, seenBadRows);
-        for (const d of new Set(staged.map((s) => s.attendanceDate))) repo.ensureDay(d);
-        const added = repo.stageSwipes(staged);
-        summary.newlyStaged += added;
-        summary.sweptDays = daysBetween(from, yesterday).length;
-        log('run.swept', { from, to: yesterday, read: rows.length, newlyStaged: added });
-      } catch (err) {
-        // A failed sweep is not fatal: today's day job still publishes, and
-        // tomorrow's sweep covers the same span again.
-        const msg = err instanceof Error ? err.message : String(err);
-        summary.outcome = 'partial';
-        log('run.sweep.failed', { from, to: yesterday, error: msg });
+      const span = daysBetween(from, yesterday);
+      summary.sweptDays = span.length;
+      let failures = 0;
+
+      for (const d of span) {
+        try {
+          const rows = await cosec.fetchRange(d, d);
+          summary.sweptRows += rows.length;
+          const staged = mapRows(rows, shape, summary, seenBadRows);
+          if (staged.length) repo.ensureDay(d);
+          const added = repo.stageSwipes(staged);
+          summary.newlyStaged += added;
+          if (added) log('run.swept.day', { date: d, read: rows.length, newlyStaged: added });
+        } catch (err) {
+          // One day failing must not cost the other nine. Tomorrow's sweep
+          // covers the same span again, so nothing is lost by continuing.
+          failures++;
+          log('run.sweep.day.failed', { date: d, error: err instanceof Error ? err.message : String(err) });
+        }
       }
+
+      if (failures) summary.outcome = 'partial';
+      log('run.swept', {
+        from, to: yesterday, days: span.length, read: summary.sweptRows,
+        newlyStaged: summary.newlyStaged, failedDays: failures,
+      });
     }
 
     summary.reopened = repo.reopenDaysWithPendingWork();

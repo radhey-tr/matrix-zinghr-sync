@@ -290,3 +290,50 @@ Consequences:
   not a constraint.
 - Per-POST authentication is retained: at this volume it is typically one extra
   call per run, and it avoids expiry arithmetic and clock-skew entirely.
+
+## COSEC volume and pagination (measured 2026-08-27)
+
+**COSEC does not paginate and does not cap.** A ten-year range returned
+157,769 rows in one response. Slices add up exactly — a Jan–Apr query (4,678)
+plus a May–Aug query (10,630) equals the combined Jan–Aug query (15,308) — so
+nothing is being silently truncated.
+
+Cost of that 157,769-row response, a reasonable proxy for a 10-day sweep at a
+production 20k swipes/day:
+
+| stage | time | heap |
+|---|---|---|
+| download (31 MB) | 9.9 s | — |
+| `JSON.parse` | 0.43 s | 152 MB |
+| map + validate | 0.19 s | 194 MB |
+| stage (insert-or-ignore) | 1.70 s | 196 MB |
+| re-stage (dedupe no-op) | 1.07 s | — |
+
+Roughly 200 bytes and 1.2 KB of heap per row.
+
+### Consequence: the sweep fetches one day at a time
+
+Because the whole span arrives in a single all-or-nothing response, a 10-day
+sweep at production volume would be one ~40 MB download holding ~250 MB of
+heap. Per-day requests instead:
+
+- bound memory to a single day (~20k rows, ~25 MB heap)
+- let one failing day fail alone — the other nine still land, and tomorrow's
+  sweep covers the same span again
+- make progress visible per day in the log
+
+No pagination logic is needed, since each day arrives complete.
+
+### Sizing at ~20k swipes/day (2,000 users)
+
+| | |
+|---|---|
+| per day | ~20k rows, ~4 MB |
+| 10-day sweep | 10 requests, ~200k rows total |
+| POSTs per run | ~20 at `BATCH_SIZE=1000` |
+| first run against an empty ledger | ~200k staged and sent — expect minutes, not seconds |
+
+`BATCH_SIZE` raised 500 → 1000. Rejections carry element indices, so batch size
+no longer drives failure-attribution cost; the remaining reason not to go
+straight to the 5000 cap is that a batch-scoped rejection carrying no index
+still falls back to bisection.

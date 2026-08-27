@@ -77,16 +77,35 @@ describe('the nightly run', () => {
 
 describe('the sweep is what catches late-arriving swipes', () => {
   test('a swipe appearing for an already-complete day reopens it and is sent', async () => {
-    // Day one: the day job sees nothing.
-    let s = await runOnce(deps((f, t) => (f === t ? [] : [])));
+    // The sweep fetches one day at a time, so the fake keys off the date asked
+    // for rather than the width of the range.
+    let cosecHolds: Array<Record<string, unknown>> = [];
+    const byDate = (f: string) => (f === YESTERDAY ? cosecHolds : []);
+
+    // Night one: COSEC has nothing yet for yesterday.
+    await runOnce(deps(byDate));
     assert.equal(repo.incompleteDays(9).length, 0, 'day settles complete with zero rows');
 
-    // Day two: COSEC has now recorded a swipe that happened yesterday --
-    // 22.9% of real swipes arrive this way.
-    s = await runOnce(deps((f, t) => (f === t ? [] : [row('99', '08/25/2026')])));
+    // Night two: COSEC has now recorded a swipe that happened yesterday --
+    // 22.8% of real swipes arrive more than a day late.
+    cosecHolds = [row('99', '08/25/2026')];
+    const s = await runOnce(deps(byDate));
 
     assert.equal(s.publish.sent, 1, 'the late swipe must reach ZingHR');
     assert.deepEqual(s.reopened, [YESTERDAY], 'and its day must reopen');
+  });
+
+  test('one failing day does not cost the rest of the sweep', async () => {
+    // Per-day requests exist partly for this: a single bad day must not take
+    // the other nine with it.
+    const bad = addDays(YESTERDAY, -2);
+    const s = await runOnce(deps((f) => {
+      if (f === bad) throw new Error('COSEC HTTP 503');
+      return f === YESTERDAY ? [row('7', '08/25/2026')] : [];
+    }));
+
+    assert.equal(s.publish.sent, 1, 'the healthy days still deliver');
+    assert.equal(s.outcome, 'partial', 'but the run reports itself degraded');
   });
 
   test('re-reading the same rows sends nothing the second time', async () => {
