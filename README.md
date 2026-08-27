@@ -13,9 +13,16 @@ Observed API behaviour: [`docs/API-NOTES.md`](docs/API-NOTES.md)
 
     npm install
     cp .env.example .env        # fill in credentials
+    npm run build               # bundles to dist/, no experimental flags
     npm run doctor              # check the COSEC mapping against live data
-    DRY_RUN=true npm run run:once
+    npm run run:once            # one run (set DRY_RUN=true first)
     npm start                   # resident process, runs on SCHEDULE
+
+Configuration is read from `.env` by Node's own `--env-file`, so there is no
+dotenv dependency and the service needs no wrapper script to set variables.
+
+For development against the TypeScript sources directly, `npm run dev:once`
+and `npm run dev:cli` use `.env.local`.
 
 ## How a run works
 
@@ -105,14 +112,24 @@ going live.
 
 ## Deployment
 
-Long-running process under a supervisor with restart-on-exit — systemd, or a
-Windows service via NSSM. Needs outbound access to COSEC and to
-`mservices*.zinghr.com`. ZingHR App Registration may have IP allowlisting
-enabled, so the egress IP must be registered.
+**Windows Server: [`docs/DEPLOY-WINDOWS.md`](docs/DEPLOY-WINDOWS.md)** — full
+walkthrough including the `better-sqlite3` native-module trap, NSSM service
+setup, and a Task Scheduler alternative.
+
+**Before going live: [`docs/PRODUCTION-CHECKLIST.md`](docs/PRODUCTION-CHECKLIST.md).**
+
+In short: a long-running process under a supervisor with restart-on-exit —
+systemd, or NSSM on Windows. Outbound access to COSEC and
+`mservices.zinghr.com`. ZingHR's App Registration may have IP allowlisting, in
+which case the egress IP must be registered.
 
 Set `HEARTBEAT_URL` to an external dead-man's-switch. A nightly job can be dead
 for a fortnight before anyone notices, and internal monitoring cannot report
 its own death.
+
+`npm run build` produces `dist/` (~53 KB). Runtime dependencies stay external,
+so `node_modules` ships alongside — unavoidable regardless, since
+`better-sqlite3` is a native module.
 
 ## Disk
 

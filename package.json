@@ -7,14 +7,16 @@
     "node": ">=22"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json --noEmit",
+    "build": "node scripts/build.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test --test-timeout=15000 test/*.test.ts",
-    "run:once": "node --experimental-strip-types src/main.ts --once",
-    "start": "node --experimental-strip-types src/main.ts",
-    "cli": "node --experimental-strip-types src/cli.ts",
-    "doctor": "node --experimental-strip-types src/cli.ts doctor",
-    "status": "node --experimental-strip-types src/cli.ts status"
+    "run:once": "node --env-file=.env dist/main.js --once",
+    "start": "node --env-file=.env dist/main.js",
+    "cli": "node --env-file=.env dist/cli.js",
+    "doctor": "node --env-file=.env dist/cli.js doctor",
+    "status": "node --env-file=.env dist/cli.js status",
+    "dev:once": "node --experimental-strip-types --env-file=.env.local src/main.ts --once",
+    "dev:cli": "node --experimental-strip-types --env-file=.env.local src/cli.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",
@@ -26,6 +28,7 @@
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.12",
     "@types/node": "^22.10.5",
+    "esbuild": "^0.28.2",
     "typescript": "^5.7.3"
   }
 }

@@ -12,3 +12,4 @@ uat-results/
 .env.local
 scratch.db*
 scratch.lock
+dist/
