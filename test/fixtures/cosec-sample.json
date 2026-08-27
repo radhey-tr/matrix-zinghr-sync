@@ -1,0 +1,5 @@
+{"template-data" : [
+ {"template-id":"133","userid":"2349","username":"SAMPLE NAME A","indexno":"555270","userid1":"2349","username1":"SAMPLE NAME A","indexno1":"555270","eventdatetime":"08/01/2026 05:58:10","eventdatetime1":"08/01/2026 05:58:10","entryexittype":"0","idatetime":"08/06/2026 15:21:34","mastercontrollerid":"2113"},
+ {"template-id":"133","userid":"2127","username":"SAMPLE NAME B","indexno":"581561","userid1":"2127","username1":"SAMPLE NAME B","indexno1":"581561","eventdatetime":"08/26/2026 14:33:54","eventdatetime1":"08/26/2026 14:33:54","entryexittype":"1","idatetime":"08/26/2026 14:33:54","mastercontrollerid":"1800"},
+ {"template-id":"133","userid":"2127","username":"SAMPLE NAME B","indexno":"581562","userid1":"2127","username1":"SAMPLE NAME B","indexno1":"581562","eventdatetime":"08/26/2026 14:33:54","eventdatetime1":"08/26/2026 14:33:54","entryexittype":"0","idatetime":"08/26/2026 14:33:55","mastercontrollerid":"1800"}
+]}

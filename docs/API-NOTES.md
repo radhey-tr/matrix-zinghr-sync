@@ -92,3 +92,86 @@ ZingHR does with a code it does not recognise is theirs to own. Consequences:
    a NAT/ISP change would present as an auth failure.
 8. `apiPermission` case differs between the UAT (`sswp`) and PROD (`SSWP`)
    examples; treat as configuration rather than assuming case-insensitivity.
+
+---
+
+# Matrix COSEC — observed contract (UAT, 2026-08-26)
+
+    http://111.93.87.11:818/cosec/api.svc/v2/template-data
+      ?action=get;id=133;date-range=DDMMYYYY-DDMMYYYY;format=json
+
+HTTP Basic. Response: `{"template-data": [ {...}, ... ]}`.
+
+## Query string uses SEMICOLONS, not ampersands
+
+`action=get;id=133;date-range=...;format=json`. `URLSearchParams` would encode
+this as a single parameter named `action`, so the query string is assembled by
+hand. Do not "fix" it to `&`.
+
+## Record shape
+
+    {"template-id":"133","userid":"2349","username":"HARI ORAON",
+     "indexno":"555270","userid1":"2349","username1":"HARI ORAON",
+     "indexno1":"555270","eventdatetime":"08/01/2026 05:58:10",
+     "eventdatetime1":"08/01/2026 05:58:10","entryexittype":"0",
+     "idatetime":"08/06/2026 15:21:34","mastercontrollerid":"2113"}
+
+- `eventdatetime` is **MM/DD/YYYY HH:mm:ss** — ZingHR wants `yyyy-MM-dd HH:mm:ss`,
+  so a conversion IS required. The earlier "pass through verbatim" plan was wrong.
+  Converted by string rearrangement, never via `Date`, so no timezone can be
+  applied to what is already client-local wall-clock time.
+- The `*1` columns (`userid1`, `username1`, `indexno1`, `eventdatetime1`) are
+  byte-identical to their unsuffixed twins across all 6,824 sampled rows. Ignored.
+- `entryexittype`: 0 (98.3%) / 1 (1.7%). Not sent — ZingHR derives direction itself.
+- `date-range` filters on `eventdatetime` and is inclusive at both ends.
+
+## `indexno` is a stable, globally unique swipe identifier
+
+Measured over 6,824 rows spanning July + August:
+
+- unique within a fetch, and unique across separate month-long fetches
+- **stable across independent overlapping fetches** — 765 shared rows, zero
+  identity mismatches
+- ordered by `idatetime`, not `eventdatetime`, so it is an insertion sequence
+  assigned when COSEC records the event (gaps present; other templates share it)
+
+So `indexno` is the dedupe key. A natural key of
+`userid+eventdatetime+mastercontrollerid` would have **silently collapsed 4 of
+765 genuinely distinct swipes** in one sampled window, and 6 across August.
+
+## `idatetime` is the receive timestamp — and late arrival is the norm
+
+Measured over 3,906 August rows:
+
+| metric | value |
+|---|---|
+| `idatetime` earlier than `eventdatetime` | 0 rows (never) |
+| median lag | 0.00 h |
+| p95 lag | **120.3 h (5.0 days)** |
+| max lag | **6.44 days** |
+| arriving more than 24h after the swipe | **893 / 3906 = 22.9%** |
+
+**Fetching only "yesterday" would silently miss roughly a quarter of all
+swipes.** This is no longer a theoretical concern from the design doc; it is
+measured in this tenant's own data. The re-read sweep is mandatory, and
+`SWEEP_DAYS` must exceed the observed 6.44-day maximum — set to 10.
+
+Re-reading is cheap (LAN-ish, ~2.5s for 3,906 rows) and sends nothing new,
+because `indexno` dedupes at the database level.
+
+## Open
+
+- **Which field is ZingHR's employee code?** `userid` (2349) or `indexno`?
+  `indexno` is per-record so it cannot be the person; `userid` is 1:127 across
+  the sample and is the only plausible candidate. Configurable via
+  `COSEC_EMP_FIELD`, defaulting to `userid`. NEEDS CLIENT CONFIRMATION before
+  production — this is the one mapping that would silently send wrong data.
+- No pagination or truncation observed (3,906 rows in a single response). No
+  documented cap; the truncation guard stays in as a precaution.
+
+## Security
+
+The endpoint is **plain HTTP on a public IP** with basic auth, so
+`sm:admin123` crosses the internet base64-encoded and trivially readable, and
+the credentials are guessable. Raise with Matrix/the client: HTTPS, a
+non-default credential, and IP allowlisting on port 818.

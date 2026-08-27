@@ -16,6 +16,15 @@ const ConfigSchema = z.object({
   COSEC_USERNAME: z.string().min(1),
   COSEC_PASSWORD: z.string().min(1),
   COSEC_TIMEOUT_MS: int(30_000),
+  /** COSEC report template to pull. UAT uses 133. */
+  COSEC_TEMPLATE_ID: z.string().min(1).default('133'),
+  /**
+   * Which COSEC field carries ZingHR's employee code. `indexno` is per-record
+   * so it cannot identify a person; `userid` is the only plausible candidate.
+   * NEEDS CLIENT CONFIRMATION — the one mapping that would silently send
+   * correct-looking data for the wrong people.
+   */
+  COSEC_EMP_FIELD: z.string().min(1).default('userid'),
   /** Treat a response whose row count equals this as possibly truncated. */
   COSEC_PAGE_SIZE: int(1000),
 
@@ -39,8 +48,12 @@ const ConfigSchema = z.object({
   // ---- Scheduling --------------------------------------------------------
   SCHEDULE: z.string().default('30 0 * * *'),
   TIMEZONE: z.string().default('Asia/Kolkata'),
-  /** Days re-READ from COSEC each run. Sends only rows not already staged. */
-  SWEEP_DAYS: int(5),
+  /**
+   * Days re-READ from COSEC each run. Sends only rows not already staged.
+   * UAT data shows 22.9% of swipes arrive >24h after the event, p95 = 5.0
+   * days and max = 6.44 days, so this must comfortably exceed a week.
+   */
+  SWEEP_DAYS: int(10),
   /** Bounds catch-up so a long outage drains over nights instead of one run. */
   MAX_DAYS_PER_RUN: int(5),
 

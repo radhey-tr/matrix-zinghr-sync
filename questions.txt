@@ -67,3 +67,5 @@ the template of cosec to fields accepted by ZingHR?
 General:
 
 1. How often we need to sync data?
+
+cosec API: cosec/api.svc/v2/template-data?action=get;id=105;date-range=05082026-05082026
