@@ -43,6 +43,7 @@ export interface RunSummary {
   reopened: string[];
   publish: PublishStats;
   stalled: string[];
+  pruned: number;
   error?: string;
 }
 
@@ -74,7 +75,7 @@ export async function runOnce(deps: RunDeps): Promise<RunSummary> {
     unmappable: 0, unmappableSamples: [],
     sweptDays: 0, reopened: [],
     publish: { batches: 0, calls: 0, sent: 0, rejected: 0, ambiguous: 0 },
-    stalled: [],
+    stalled: [], pruned: 0,
   };
 
   try {
@@ -168,6 +169,13 @@ export async function runOnce(deps: RunDeps): Promise<RunSummary> {
       if (repo.settleDay(d, stallMs) === 'stalled') summary.stalled.push(d);
     }
     if (summary.stalled.length) summary.outcome = 'partial';
+
+    // ---- prune ------------------------------------------------------------
+    // Last, so a failure here cannot cost a run that has already delivered.
+    const cutoff = addDays(today, -cfg.RETENTION_DAYS);
+    summary.pruned = repo.pruneSent(cutoff);
+    repo.pruneRunLog(Date.now() - cfg.RUN_LOG_RETENTION_DAYS * 86_400_000);
+    if (summary.pruned) log('run.pruned', { before: cutoff, rows: summary.pruned });
   } catch (err) {
     summary.outcome = 'failed';
     summary.error = err instanceof Error ? err.message : String(err);

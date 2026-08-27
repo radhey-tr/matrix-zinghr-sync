@@ -134,6 +134,12 @@ export function formatReport(summary: RunSummary, repo: Repo, cfg: Config, alert
     L.push('');
   }
 
+  if (summary.pruned) {
+    L.push(`RETENTION`);
+    L.push(`  pruned ${summary.pruned} delivered swipe(s) past ${cfg.RETENTION_DAYS} days`);
+    L.push('');
+  }
+
   L.push('SWEEP');
   L.push(`  re-read ${summary.sweptDays} day(s) from COSEC; reopened ${summary.reopened.length}`);
   L.push(`  (COSEC records ~23% of swipes >24h after the event, so this is load-bearing)`);

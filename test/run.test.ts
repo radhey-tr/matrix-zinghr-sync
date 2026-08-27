@@ -17,6 +17,7 @@ const cfg = {
   TIMEZONE: 'Asia/Kolkata', SWEEP_DAYS: 3, MAX_DAYS_PER_RUN: 5, BATCH_SIZE: 100,
   MAX_ATTEMPTS: 3, AMBIGUOUS_RETRIES: 1, QUARANTINE_DAYS: 7, STALL_DAYS: 3,
   BACKOFF_BASE_MS: 1, BACKOFF_CAP_MS: 1, DRY_RUN: false,
+  RETENTION_DAYS: 180, RUN_LOG_RETENTION_DAYS: 365,
   COSEC_RESPONSE_KEY: 'template-data', COSEC_FIELD_EMP: 'userid',
   COSEC_FIELD_DATETIME: 'eventdatetime', COSEC_FIELD_UNIQUE: 'indexno',
   COSEC_FIELD_TERMINAL: 'mastercontrollerid', COSEC_FIELD_RECEIVED: 'idatetime',
@@ -162,5 +163,65 @@ describe('date arithmetic', () => {
   test('spans are inclusive at both ends', () => {
     assert.deepEqual(daysBetween('2026-08-24', '2026-08-26'),
       ['2026-08-24', '2026-08-25', '2026-08-26']);
+  });
+});
+
+describe('retention', () => {
+  test('prunes delivered swipes past the window, keeps unresolved ones', async () => {
+    const { openDb: o, migrate: m } = await import('../src/db/index.ts');
+    const d2 = o(':memory:'); m(d2);
+    const r2 = new Repo(d2);
+    for (const day of ['2020-01-01', '2026-08-25']) r2.ensureDay(day);
+
+    const mk = (uid: string, day: string) => ({
+      attendanceDate: day, terminalId: 'T', uniqueId: uid,
+      empIdentification: 'E', swipeDateTime: `${day} 09:00:00`, payloadJson: '{}',
+    });
+    r2.stageSwipes([mk('old-sent', '2020-01-01'), mk('old-stuck', '2020-01-01'), mk('new', '2026-08-25')]);
+
+    // Deliver only the first old one; leave the second unresolved.
+    const claimed = r2.claimBatch(10);
+    r2.markSent(claimed.filter((c) => c.unique_id !== 'old-stuck').map((c) => c.id));
+    r2.releaseUnblamed(claimed.filter((c) => c.unique_id === 'old-stuck').map((c) => c.id), 'outage', null);
+
+    assert.equal(r2.pruneSent('2026-01-01'), 1, 'only the delivered old swipe');
+
+    const left = (d2.prepare('SELECT unique_id FROM swipe_event ORDER BY unique_id').all() as Array<{ unique_id: string }>)
+      .map((x) => x.unique_id);
+    assert.deepEqual(left, ['new', 'old-stuck'], 'unresolved work is never pruned, however old');
+  });
+
+  test('config refuses a retention window that overlaps the sweep', async () => {
+    const { loadConfig } = await import('../src/config.ts');
+    const base = {
+      COSEC_BASE_URL: 'http://h/x', COSEC_USERNAME: 'u', COSEC_PASSWORD: 'p',
+      ZINGHR_AUTH_URL: 'https://h/a', ZINGHR_SYNC_URL: 'https://h/s',
+      ZINGHR_USERNAME: 'u', ZINGHR_PASSWORD: 'p', ENVIRONMENT: 'uat',
+    };
+    // Pruning inside the sweep window would let a delivered swipe be re-read,
+    // re-staged and re-sent -- a duplicate in payroll, from a config typo.
+    assert.throws(
+      () => loadConfig({ ...base, SWEEP_DAYS: '10', RETENTION_DAYS: '20' } as NodeJS.ProcessEnv),
+      /RETENTION_DAYS/,
+    );
+    assert.ok(loadConfig({ ...base, SWEEP_DAYS: '10', RETENTION_DAYS: '180' } as NodeJS.ProcessEnv));
+  });
+});
+
+describe('a malformed prune cutoff must never wipe the ledger', () => {
+  test('addDays refuses non-finite day counts', () => {
+    // A missing RETENTION_DAYS once produced "NaN-NaN-NaN", which sorts above
+    // every real date — so the cutoff deleted every delivered swipe.
+    assert.throws(() => addDays('2026-08-26', NaN), RangeError);
+    assert.throws(() => addDays('2026-08-26', undefined as unknown as number), RangeError);
+    assert.throws(() => addDays('not-a-date', 1), RangeError);
+  });
+
+  test('pruneSent refuses a cutoff that is not a date', () => {
+    const { openDb: o, migrate: m } = { openDb, migrate };
+    const d2 = o(':memory:'); m(d2);
+    const r2 = new Repo(d2);
+    assert.throws(() => r2.pruneSent('NaN-NaN-NaN'), RangeError);
+    assert.throws(() => r2.pruneSent(''), RangeError);
   });
 });

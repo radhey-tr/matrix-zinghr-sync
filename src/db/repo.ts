@@ -343,6 +343,33 @@ export class Repo {
       .all(...dates) as SyncDayRow[];
   }
 
+  /**
+   * Delete delivered swipes older than a cutoff, keyed on ATTENDANCE DATE
+   * rather than insertion time — the sweep re-reads COSEC by attendance date,
+   * so that is the axis on which pruning could collide with it.
+   *
+   * Only `sent` rows go. Anything pending, quarantined or abandoned is
+   * unresolved work and is never pruned regardless of age.
+   *
+   * SQLite does not shrink the file on delete, but it reuses the freed pages,
+   * so the database plateaus at roughly one retention window rather than
+   * growing forever. `cli vacuum` reclaims the space if it is ever needed.
+   */
+  pruneSent(beforeAttendanceDate: string): number {
+    // Last line of defence: a malformed cutoff string-compares above every
+    // real date and would delete every delivered swipe in the ledger.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(beforeAttendanceDate)) {
+      throw new RangeError(`pruneSent: cutoff must be YYYY-MM-DD, got "${beforeAttendanceDate}"`);
+    }
+    return this.db
+      .prepare(`DELETE FROM swipe_event WHERE state = 'sent' AND attendance_date < ?`)
+      .run(beforeAttendanceDate).changes;
+  }
+
+  pruneRunLog(beforeMs: number): number {
+    return this.db.prepare(`DELETE FROM run_log WHERE started_at < ?`).run(beforeMs).changes;
+  }
+
   // ---- reporting ---------------------------------------------------------
 
   pendingCount(): number {

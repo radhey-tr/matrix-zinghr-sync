@@ -8,6 +8,7 @@
  *   reopen <date>   re-fetch and re-publish a settled day
  *   replay          return quarantined/abandoned swipes to the queue
  *   pending [n]     show payloads that would go next
+ *   vacuum          reclaim disk space after pruning
  */
 import { loadConfig } from './config.ts';
 import { migrate, openDb } from './db/index.ts';
@@ -110,6 +111,10 @@ switch (cmd) {
     console.log(`abandoned        ${ab.length}`);
     const amb = repo.ambiguousRecords(1);
     console.log(`ambiguous sends  ${amb.length}`);
+    const pages = db.prepare('PRAGMA page_count').get() as { page_count: number };
+    const psize = (db.prepare('PRAGMA page_size').get() as { page_size: number }).page_size;
+    const total = db.prepare('SELECT COUNT(*) n FROM swipe_event').get() as { n: number };
+    console.log(`ledger           ${((pages.page_count * psize) / 1048576).toFixed(1)} MB, ${total.n} swipes, retention ${cfg.RETENTION_DAYS}d`);
     console.log('\nrecent days:');
     for (const d of repo.incompleteDays(20)) {
       console.log(`  ${pad(d.attendance_date, 14)}${pad(d.state, 12)}cosec=${pad(String(d.cosec_count ?? '-'), 8)}sent=${d.sent_count}`);
@@ -158,9 +163,22 @@ switch (cmd) {
     break;
   }
 
+  case 'vacuum': {
+    // Pruning frees pages for reuse but does not shrink the file. Only worth
+    // running if the disk is actually tight: VACUUM rewrites the whole
+    // database and needs roughly its size again in temp space.
+    const before = db.prepare('PRAGMA page_count').get() as { page_count: number };
+    const pageSize = (db.prepare('PRAGMA page_size').get() as { page_size: number }).page_size;
+    console.log(`before: ${((before.page_count * pageSize) / 1048576).toFixed(1)} MB`);
+    db.exec('VACUUM');
+    const after = db.prepare('PRAGMA page_count').get() as { page_count: number };
+    console.log(`after:  ${((after.page_count * pageSize) / 1048576).toFixed(1)} MB`);
+    break;
+  }
+
   default:
     console.error(`unknown command: ${cmd}`);
-    console.error('try: doctor | status | day <date> | reopen <date> | replay | pending [n]');
+    console.error('try: doctor | status | day <date> | reopen <date> | replay | pending [n] | vacuum');
     process.exit(2);
 }
 

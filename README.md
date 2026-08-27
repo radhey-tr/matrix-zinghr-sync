@@ -114,6 +114,25 @@ Set `HEARTBEAT_URL` to an external dead-man's-switch. A nightly job can be dead
 for a fortnight before anyone notices, and internal monitoring cannot report
 its own death.
 
+## Disk
+
+Measured at ~20k swipes/day: **~330 bytes per swipe**, so ~6 MB/day.
+
+| retention | steady-state ledger |
+|---|---|
+| 30 days | ~180 MB |
+| 180 days (default) | ~1 GB |
+| 365 days | ~2.1 GB |
+
+Delivered swipes past `RETENTION_DAYS` are pruned at the end of each run.
+Anything unresolved — pending, quarantined, abandoned — is never pruned
+regardless of age. SQLite reuses freed pages, so the file plateaus rather than
+growing; `npm run cli vacuum` reclaims space on disk if it is ever needed.
+
+`RETENTION_DAYS` must exceed `SWEEP_DAYS * 3 + 7`, enforced at boot. Pruning a
+delivered swipe still inside the sweep window would let it be re-read,
+re-staged and re-sent — a duplicate in payroll, from a config typo.
+
 ## Tests
 
     npm test          # 74 tests

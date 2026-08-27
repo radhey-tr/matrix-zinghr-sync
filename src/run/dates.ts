@@ -15,6 +15,14 @@ export function todayIso(now: Date = new Date(), timeZone = 'Asia/Kolkata'): str
 }
 
 export function addDays(iso: string, days: number): string {
+  if (!Number.isFinite(days)) {
+    // Silently returning "NaN-NaN-NaN" would sort ABOVE every real date, so a
+    // pruning cutoff built from it deletes the whole ledger.
+    throw new RangeError(`addDays: days must be finite, got ${days}`);
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) {
+    throw new RangeError(`addDays: expected YYYY-MM-DD, got "${iso}"`);
+  }
   const [y, m, d] = iso.split('-').map(Number) as [number, number, number];
   const t = Date.UTC(y, m - 1, d) + days * 86_400_000;
   const dt = new Date(t);

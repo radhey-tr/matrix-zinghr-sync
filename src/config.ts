@@ -117,7 +117,15 @@ const ConfigSchema = z.object({
   DB_PATH: z.string().default('./sync.db'),
   LOCK_PATH: z.string().default('./sync.lock'),
   AUDIT_DIR: z.string().default('./audit'),
-  AUDIT_RETENTION_DAYS: int(90),
+  /**
+   * How long delivered swipes stay queryable. At ~20k swipes/day the ledger
+   * grows ~6 MB/day, so this sets the steady-state size: 180 days is ~1 GB.
+   *
+   * It is an audit window, not a technical limit — payroll disputes are the
+   * reason to keep them at all, so it should comfortably span a few pay cycles.
+   */
+  RETENTION_DAYS: int(180),
+  RUN_LOG_RETENTION_DAYS: int(365),
   HEARTBEAT_URL: z.string().url().optional(),
   REPORT_EMAIL_TO: z.string().optional(),
   ALERT_WEBHOOK_URL: z.string().url().optional(),
@@ -129,10 +137,27 @@ const ConfigSchema = z.object({
   LOG_LEVEL: z.enum(['trace', 'debug', 'info', 'warn', 'error']).default('info'),
 });
 
+const Validated = ConfigSchema.superRefine((c, ctx) => {
+  // The sweep re-reads the last SWEEP_DAYS by attendance date. Pruning a
+  // delivered swipe still inside that window would let the sweep re-stage and
+  // re-send it as a duplicate, so retention must clear the window with room
+  // to spare. Caught at boot rather than discovered as duplicates in payroll.
+  const floor = c.SWEEP_DAYS * 3 + 7;
+  if (c.RETENTION_DAYS < floor) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['RETENTION_DAYS'],
+      message:
+        `must be at least ${floor} with SWEEP_DAYS=${c.SWEEP_DAYS} — pruning inside ` +
+        `the sweep window would re-stage delivered swipes and duplicate them in payroll`,
+    });
+  }
+});
+
 export type Config = z.infer<typeof ConfigSchema>;
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const parsed = ConfigSchema.safeParse(env);
+  const parsed = Validated.safeParse(env);
   if (!parsed.success) {
     const issues = parsed.error.issues
       .map((i) => `  ${i.path.join('.') || '(root)'}: ${i.message}`)
