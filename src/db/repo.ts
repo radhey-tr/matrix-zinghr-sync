@@ -276,6 +276,73 @@ export class Repo {
       .run(Date.now()).changes;
   }
 
+  /**
+   * A day previously marked complete can receive new swipes: COSEC records
+   * ~23% of them more than a day after the event, so the sweep genuinely finds
+   * work for settled dates. Without this the ledger would claim a day is done
+   * while rows for it sit pending.
+   */
+  reopenDaysWithPendingWork(): string[] {
+    const rows = this.db
+      .prepare(
+        `SELECT DISTINCT attendance_date AS d FROM swipe_event
+         WHERE state IN ('pending','in_flight')
+           AND attendance_date IN (SELECT attendance_date FROM sync_day WHERE state = 'complete')`,
+      )
+      .all() as Array<{ d: string }>;
+    if (rows.length === 0) return [];
+    const stmt = this.db.prepare(
+      `UPDATE sync_day SET state = 'publishing', completed_at = NULL WHERE attendance_date = ?`,
+    );
+    this.db.transaction(() => rows.forEach((r) => stmt.run(r.d)))();
+    return rows.map((r) => r.d);
+  }
+
+  /** Days holding swipes that are not yet settled, for post-publish bookkeeping. */
+  daysWithWork(): string[] {
+    return (
+      this.db
+        .prepare(`SELECT DISTINCT attendance_date AS d FROM swipe_event ORDER BY d`)
+        .all() as Array<{ d: string }>
+    ).map((r) => r.d);
+  }
+
+  startRun(correlationId: string): number {
+    return Number(
+      this.db
+        .prepare(`INSERT INTO run_log (correlation_id, started_at) VALUES (?, ?)`)
+        .run(correlationId, Date.now()).lastInsertRowid,
+    );
+  }
+
+  finishRun(id: number, outcome: string, s: Record<string, number>, error?: string): void {
+    this.db
+      .prepare(
+        `UPDATE run_log SET finished_at = ?, outcome = ?, days_processed = ?,
+           fetched = ?, sent = ?, rejected = ?, ambiguous = ?, error = ?
+         WHERE id = ?`,
+      )
+      .run(
+        Date.now(), outcome, s.days ?? 0, s.fetched ?? 0, s.sent ?? 0,
+        s.rejected ?? 0, s.ambiguous ?? 0, error ?? null, id,
+      );
+  }
+
+  lastSuccessfulRunAt(): number | null {
+    const r = this.db
+      .prepare(`SELECT MAX(finished_at) AS t FROM run_log WHERE outcome = 'ok'`)
+      .get() as { t: number | null };
+    return r.t;
+  }
+
+  daySummaries(dates: string[]): SyncDayRow[] {
+    if (dates.length === 0) return [];
+    const marks = dates.map(() => '?').join(',');
+    return this.db
+      .prepare(`SELECT * FROM sync_day WHERE attendance_date IN (${marks}) ORDER BY attendance_date`)
+      .all(...dates) as SyncDayRow[];
+  }
+
   // ---- reporting ---------------------------------------------------------
 
   pendingCount(): number {

@@ -1,66 +1,47 @@
 /**
  * Matrix COSEC client.
  *
- * Three things about this endpoint drive the implementation:
+ * Two things about this endpoint drive the implementation:
  *
  *  1. The query string is SEMICOLON-delimited, not `&`. URLSearchParams would
  *     encode the whole thing as one parameter called `action`, so it is built
  *     by hand. This is not a bug to tidy up later.
  *
- *  2. `eventdatetime` arrives as MM/DD/YYYY HH:mm:ss and ZingHR wants
- *     yyyy-MM-dd HH:mm:ss. The conversion is pure string rearrangement --
- *     never `new Date()` -- because the value is already client-local wall
- *     clock time and parsing it would invite a timezone to be applied to it.
- *
- *  3. `indexno` is a stable, globally unique swipe id (verified across
- *     overlapping fetches), so it is the dedupe key. The obvious natural key
- *     of userid+eventdatetime+controller silently collapses genuine distinct
- *     swipes -- 6 of them across one sampled month.
+ *  2. Nothing about COSEC's column names or date format is compiled in --
+ *     production may use a different template. See src/cosec-fields.ts.
  */
 import { request } from 'undici';
 import { z } from 'zod';
 import type { Config } from './config.ts';
 import type { StageableSwipe } from './db/repo.ts';
 import type { ZingSwipe } from './types.ts';
+import {
+  compileDateFormat, field, parseDateTime, type CosecFieldMap,
+} from './cosec-fields.ts';
 
-/** COSEC's own field names, hyphen and all. */
-const CosecRowSchema = z
-  .object({
-    userid: z.string(),
-    username: z.string().optional(),
-    indexno: z.string(),
-    eventdatetime: z.string(),
-    idatetime: z.string().optional(),
-    entryexittype: z.string().optional(),
-    mastercontrollerid: z.string().optional(),
-  })
-  .passthrough();
-
-const CosecResponseSchema = z.object({
-  'template-data': z.array(CosecRowSchema),
-});
-
-export type CosecRow = z.infer<typeof CosecRowSchema>;
+export type CosecRow = Record<string, unknown>;
 
 export class CosecError extends Error {}
 
-const EVENT_DT_RE = /^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}:\d{2}:\d{2})$/;
+/** Everything about the source shape, resolved once from config. */
+export interface CosecShape {
+  responseKey: string;
+  fields: CosecFieldMap;
+  dateFormat: ReturnType<typeof compileDateFormat>;
+}
 
-/**
- * "08/26/2026 14:33:54" -> "2026-08-26 14:33:54".
- *
- * Deliberately string-only. Both systems run on the same client-local wall
- * clock, so introducing a Date object could only ever shift the value.
- */
-export function toZingDateTime(eventDateTime: string): string {
-  const m = EVENT_DT_RE.exec(eventDateTime.trim());
-  if (!m) throw new CosecError(`eventdatetime not MM/DD/YYYY HH:mm:ss: ${eventDateTime}`);
-  const [, mm, dd, yyyy, time] = m;
-  const month = Number(mm), day = Number(dd);
-  if (month < 1 || month > 12 || day < 1 || day > 31) {
-    throw new CosecError(`eventdatetime has an impossible date: ${eventDateTime}`);
-  }
-  return `${yyyy}-${mm}-${dd} ${time}`;
+export function shapeFrom(cfg: Config): CosecShape {
+  return {
+    responseKey: cfg.COSEC_RESPONSE_KEY,
+    fields: {
+      emp: cfg.COSEC_FIELD_EMP,
+      dateTime: cfg.COSEC_FIELD_DATETIME,
+      uniqueId: cfg.COSEC_FIELD_UNIQUE,
+      terminal: cfg.COSEC_FIELD_TERMINAL || undefined,
+      receivedAt: cfg.COSEC_FIELD_RECEIVED || undefined,
+    },
+    dateFormat: compileDateFormat(cfg.COSEC_DATETIME_FORMAT),
+  };
 }
 
 /** Business date (YYYY-MM-DD) -> COSEC's DDMMYYYY range token. */
@@ -82,21 +63,17 @@ export function buildUrl(cfg: Config, fromIso: string, toIso: string): string {
   return `${cfg.COSEC_BASE_URL}?${query}`;
 }
 
-export interface FetchResult {
-  rows: CosecRow[];
-  /** True when the row count looks like a server-side cap rather than the truth. */
-  possiblyTruncated: boolean;
-}
-
 export class CosecClient {
   private readonly cfg: Config;
+  private readonly shape: CosecShape;
 
   constructor(cfg: Config) {
     this.cfg = cfg;
+    this.shape = shapeFrom(cfg);
   }
 
-  /** Inclusive at both ends, filtered on eventdatetime. */
-  async fetchRange(fromIso: string, toIso: string): Promise<FetchResult> {
+  /** Inclusive at both ends, filtered on the swipe timestamp. */
+  async fetchRange(fromIso: string, toIso: string): Promise<CosecRow[]> {
     const url = buildUrl(this.cfg, fromIso, toIso);
     const basic = Buffer.from(
       `${this.cfg.COSEC_USERNAME}:${this.cfg.COSEC_PASSWORD}`,
@@ -122,11 +99,11 @@ export class CosecClient {
       });
     }
 
-    return { rows: parseRows(text), possiblyTruncated: false };
+    return parseRows(text, this.shape.responseKey);
   }
 }
 
-export function parseRows(text: string): CosecRow[] {
+export function parseRows(text: string, responseKey: string): CosecRow[] {
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -135,35 +112,42 @@ export function parseRows(text: string): CosecRow[] {
     // and then marking it complete is the one way this design loses data.
     throw new CosecError(`COSEC response was not JSON: ${summarise(text)}`);
   }
-  const parsed = CosecResponseSchema.safeParse(json);
+  const parsed = z
+    .object({ [responseKey]: z.array(z.record(z.unknown())) })
+    .safeParse(json);
   if (!parsed.success) {
-    throw new CosecError(`unrecognised COSEC response shape: ${summarise(text)}`);
+    // Yielding [] here would mark a day complete having sent nothing.
+    throw new CosecError(
+      `COSEC response has no "${responseKey}" array: ${summarise(text)}`,
+    );
   }
-  return parsed.data['template-data'];
+  return parsed.data[responseKey] as CosecRow[];
 }
 
 /**
  * COSEC row -> a ledger row ready to stage.
  *
- * Throws for a row we cannot safely represent; the caller counts and reports
- * those rather than letting one malformed record fail an entire day.
+ * Throws for a row we cannot safely represent, so the caller can count and
+ * report those rather than letting one malformed record fail an entire day.
  */
-export function toStageable(row: CosecRow, empField: string): StageableSwipe {
-  const emp = String((row as Record<string, unknown>)[empField] ?? '').trim();
-  if (!emp) throw new CosecError(`employee field "${empField}" is empty or absent`);
+export function toStageable(row: CosecRow, shape: CosecShape): StageableSwipe {
+  const f = shape.fields;
 
-  const swipeDateTime = toZingDateTime(row.eventdatetime);
-  const uniqueId = row.indexno?.trim();
-  if (!uniqueId) throw new CosecError('indexno is empty — no stable identity for this swipe');
+  const emp = field(row, f.emp);
+  if (!emp) throw new CosecError(`employee field "${f.emp}" is empty or absent`);
 
-  const terminalId = row.mastercontrollerid?.trim() || 'UNKNOWN';
+  const rawDt = field(row, f.dateTime);
+  if (!rawDt) throw new CosecError(`timestamp field "${f.dateTime}" is empty or absent`);
+  const swipeDateTime = parseDateTime(rawDt, shape.dateFormat);
 
-  const payload: ZingSwipe = {
-    empIdentification: emp,
-    swipeDateTime,
-    uniqueId,
-    terminalId,
-  };
+  const uniqueId = field(row, f.uniqueId);
+  if (!uniqueId) {
+    throw new CosecError(`identity field "${f.uniqueId}" is empty — no stable dedupe key`);
+  }
+
+  const terminalId = field(row, f.terminal) || 'UNKNOWN';
+
+  const payload: ZingSwipe = { empIdentification: emp, swipeDateTime, uniqueId, terminalId };
 
   return {
     attendanceDate: swipeDateTime.slice(0, 10),

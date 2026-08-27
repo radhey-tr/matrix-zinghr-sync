@@ -175,3 +175,35 @@ The endpoint is **plain HTTP on a public IP** with basic auth, so
 `sm:admin123` crosses the internet base64-encoded and trivially readable, and
 the credentials are guessable. Raise with Matrix/the client: HTTPS, a
 non-default credential, and IP allowlisting on port 818.
+
+## OBSERVED: the COSEC column set changes under you
+
+Same endpoint, same `id=133`, same `date-range`, roughly one hour apart:
+
+    11:0x  entryexittype, eventdatetime, eventdatetime1, idatetime, indexno,
+           indexno1, mastercontrollerid, template-id, userid, userid1,
+           username, username1
+
+    12:0x  entryexittype, eventdatetime, idatetime, indexno,
+           mastercontrollerid, template-id, userid, username
+
+The four `*1` columns disappeared — someone edited the template in COSEC
+between the two calls. Not a theoretical risk: it happened during development,
+on the UAT tenant, without notice.
+
+The sync was unaffected, by design:
+
+- the response schema is permissive (unknown columns are ignored, none of the
+  vanished columns were depended on)
+- every column the mapping does depend on is named in configuration, never
+  in code
+- `npm run doctor` reports what the endpoint actually returns against what is
+  configured
+
+**If a column we DO depend on is renamed**, `toStageable` throws for every row,
+the run reports `unmappable rows` in the thousands, and the daily report says
+so explicitly — pointing at `COSEC_FIELD_*` / `COSEC_DATETIME_FORMAT`. The day
+stays incomplete and retries; nothing is silently dropped or wrongly sent.
+
+Recovery is an .env edit plus `npm run doctor` to confirm, then the next run
+picks the day up. No code change, no release.

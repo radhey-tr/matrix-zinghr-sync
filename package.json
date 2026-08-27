@@ -10,9 +10,11 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test --test-timeout=15000 test/*.test.ts",
-    "migrate": "node --experimental-strip-types src/db/migrate.ts",
     "run:once": "node --experimental-strip-types src/main.ts --once",
-    "start": "node --experimental-strip-types src/main.ts"
+    "start": "node --experimental-strip-types src/main.ts",
+    "cli": "node --experimental-strip-types src/cli.ts",
+    "doctor": "node --experimental-strip-types src/cli.ts doctor",
+    "status": "node --experimental-strip-types src/cli.ts status"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

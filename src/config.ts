@@ -18,13 +18,37 @@ const ConfigSchema = z.object({
   COSEC_TIMEOUT_MS: int(30_000),
   /** COSEC report template to pull. UAT uses 133. */
   COSEC_TEMPLATE_ID: z.string().min(1).default('133'),
+
+  // ---- COSEC field mapping ------------------------------------------------
+  // Production may use a different template with different column names and a
+  // different date format. All of it is configuration: adapting is an .env
+  // change plus `npm run doctor`, not a code change. See src/cosec-fields.ts.
+
+  /** JSON property wrapping the row array. */
+  COSEC_RESPONSE_KEY: z.string().min(1).default('template-data'),
   /**
-   * Which COSEC field carries ZingHR's employee code. `indexno` is per-record
-   * so it cannot identify a person; `userid` is the only plausible candidate.
-   * NEEDS CLIENT CONFIRMATION — the one mapping that would silently send
-   * correct-looking data for the wrong people.
+   * Column carrying ZingHR's employee code. NEEDS CLIENT CONFIRMATION — the
+   * one mapping that would silently send correct-looking data for the wrong
+   * people. UAT `userid` holds values like `10001` and `SCIPL2`.
    */
-  COSEC_EMP_FIELD: z.string().min(1).default('userid'),
+  COSEC_FIELD_EMP: z.string().min(1).default('userid'),
+  /** Column carrying the swipe timestamp. */
+  COSEC_FIELD_DATETIME: z.string().min(1).default('eventdatetime'),
+  /**
+   * Column carrying a stable per-swipe identity — the dedupe key. On UAT this
+   * is `indexno`, verified stable across independent overlapping fetches.
+   */
+  COSEC_FIELD_UNIQUE: z.string().min(1).default('indexno'),
+  /** Optional: reader/controller identity, kept locally for diagnosis. */
+  COSEC_FIELD_TERMINAL: z.string().default('mastercontrollerid'),
+  /** Optional: when COSEC recorded the swipe. Drives the arrival-lag report. */
+  COSEC_FIELD_RECEIVED: z.string().default('idatetime'),
+  /**
+   * Timestamp layout in COSEC's output. Stated explicitly because MM/DD and
+   * DD/MM are indistinguishable for the first twelve days of a month — a
+   * mismatch shifts attendance by months with no error anywhere.
+   */
+  COSEC_DATETIME_FORMAT: z.string().min(1).default('MM/DD/YYYY HH:mm:ss'),
   /** Treat a response whose row count equals this as possibly truncated. */
   COSEC_PAGE_SIZE: int(1000),
 
@@ -77,11 +101,14 @@ const ConfigSchema = z.object({
   AMBIGUOUS_ALERT_AT: int(5),
   QUARANTINE_DAYS: int(7),
   STALL_DAYS: int(3),
+  /** Grace on top of 24h before "no successful run" escalates. */
+  STALE_ALERT_GRACE_HOURS: int(2),
   BACKOFF_BASE_MS: int(1_000),
   BACKOFF_CAP_MS: int(60_000),
 
   // ---- Operations --------------------------------------------------------
   DB_PATH: z.string().default('./sync.db'),
+  LOCK_PATH: z.string().default('./sync.lock'),
   AUDIT_DIR: z.string().default('./audit'),
   AUDIT_RETENTION_DAYS: int(90),
   HEARTBEAT_URL: z.string().url().optional(),

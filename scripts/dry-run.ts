@@ -6,7 +6,7 @@
  */
 import { openDb, migrate } from '../src/db/index.ts';
 import { Repo } from '../src/db/repo.ts';
-import { CosecClient, toStageable } from '../src/cosec.ts';
+import { CosecClient, shapeFrom, toStageable } from '../src/cosec.ts';
 import { loadConfig } from '../src/config.ts';
 
 const [from = '2026-08-20', to = '2026-08-26'] = process.argv.slice(2);
@@ -30,13 +30,14 @@ const repo = new Repo(db);
 
 console.log(`fetching COSEC ${from} .. ${to}`);
 const t0 = Date.now();
-const { rows } = await new CosecClient(cfg).fetchRange(from, to);
+const rows = await new CosecClient(cfg).fetchRange(from, to);
 console.log(`  ${rows.length} rows in ${Date.now() - t0}ms\n`);
 
+const shape = shapeFrom(cfg);
 const staged: ReturnType<typeof toStageable>[] = [];
 const bad: string[] = [];
 for (const r of rows) {
-  try { staged.push(toStageable(r, cfg.COSEC_EMP_FIELD)); }
+  try { staged.push(toStageable(r, shape)); }
   catch (e) { bad.push(e instanceof Error ? e.message : String(e)); }
 }
 
