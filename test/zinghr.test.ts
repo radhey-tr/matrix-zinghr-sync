@@ -134,3 +134,48 @@ describe('envelope casing — docs say PascalCase, the live API returns camelCas
     assert.throws(() => interpretSyncBody('[{"code":1}]'), ZingProtocolError);
   });
 });
+
+describe('rejections name the offending element (observed on UAT)', () => {
+  test('parses the index out of a real validation response', () => {
+    // Verbatim from UAT 2026-08-27. The PDF's error table shows only bare
+    // message strings, which is why bisection was built first.
+    const v = interpretSyncBody(
+      '{"code":0,"totalEmployeeCount":null,"svg":0,' +
+      '"data":{"swipes[1].SwipeDateTime":["SwipeDateTime must be in  yyyy-MM-dd HH:mm:ss format"]},' +
+      '"message":"Validation Error","transactionID":null}',
+    );
+    assert.equal(v.kind, 'rejected');
+    assert.deepEqual(v.kind === 'rejected' && v.failedIndices, [1]);
+  });
+
+  test('collects several distinct indices, de-duplicated and ordered', () => {
+    const v = interpretSyncBody(
+      '{"code":0,"message":"Validation Error","data":{' +
+      '"swipes[7].EmpIdentification":["\'Emp Identification\' must not be empty."],' +
+      '"swipes[2].SwipeDateTime":["SwipeDateTime is required"],' +
+      '"swipes[2].EmpIdentification":["EmpIdentification is required"]}}',
+    );
+    assert.deepEqual(v.kind === 'rejected' && v.failedIndices, [2, 7]);
+  });
+
+  test('a batch-scoped complaint names no index, so bisection stays reachable', () => {
+    const v = interpretSyncBody('{"code":0,"message":"Validation Error","data":{"swipes":["Swipes required"]}}');
+    assert.equal(v.kind, 'rejected');
+    assert.deepEqual(v.kind === 'rejected' && v.failedIndices, []);
+  });
+
+  test('the 5000-cap message is still distinguished from a poison record', () => {
+    assert.equal(
+      interpretSyncBody('{"code":0,"message":"Maximum 5000 swipes are allowed at a time"}').kind,
+      'too_large',
+    );
+  });
+
+  test('a malformed root key gives HTTP 500 with a null data — no index to find', () => {
+    const v = interpretSyncBody(
+      '{"code":0,"data":null,"message":"An unexpected error occurred."}',
+    );
+    assert.equal(v.kind, 'rejected');
+    assert.deepEqual(v.kind === 'rejected' && v.failedIndices, []);
+  });
+});

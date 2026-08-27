@@ -93,8 +93,9 @@ going live.
 - **Unknown employee codes are accepted** (`code: 1`). ZingHR performs no
   existence check. Delivery is this system's contract; employee validity is not
   detectable here.
-- **Publishing is strictly serial.** Issuing a ZingHR token invalidates the
-  previous one, so concurrent batches would void each other's credentials.
+- **Publishing is serial by choice.** Tokens do not revoke one another (UAT
+  confirms), so concurrency would be safe — but one batch usually covers a
+  week, so it would add moving parts for nothing.
 - **A ZingHR outage never blames the payload.** Batch- and run-scoped failures
   return swipes to the queue with their attempt count untouched; only a
   rejection naming a specific swipe advances it toward abandonment.

@@ -1,16 +1,20 @@
 /**
  * The publisher: drains pending swipes to ZingHR, strictly serially.
  *
- * Serial is a hard constraint, not a tuning choice. Issuing a ZingHR token
- * invalidates the previous one, so two concurrent batches would void each
- * other's credentials and produce 401s that depend on timing -- a bug that
- * passes every small-data test and fails only at production volume.
+ * Serial is a deliberate choice rather than a constraint. Tokens were expected
+ * to revoke one another, which would have forced it; UAT shows they do not.
+ * It stays because volume is tiny -- one batch typically covers a week -- so
+ * parallelism would buy nothing and cost moving parts.
  *
  * The three outcomes are deliberately handled differently:
  *
  *   accepted   -> mark sent, done.
- *   rejected   -> the server judged the batch and declined; bisect to find the
- *                 culprit so the innocent records still get delivered.
+ *   rejected   -> the server judged the batch and declined. Validation runs
+ *                 before any insert, so NOTHING landed -- including the good
+ *                 records. Rejections name the offending element
+ *                 (`swipes[1].SwipeDateTime`), so those are quarantined and
+ *                 the remainder re-sent. Bisection is the fallback for
+ *                 batch-scoped complaints that name no index.
  *   ambiguous  -> we do not know whether it applied. Retry once, then defer to
  *                 tomorrow, because every extra attempt can mint a duplicate.
  */
@@ -85,8 +89,8 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
 
   const stats: PublishStats = { batches: 0, calls: 0, sent: 0, rejected: 0, ambiguous: 0 };
 
-  // One fresh token per POST. At a ~2 minute TTL, caching would mean comparing
-  // their `exp` against our clock, where a minute of drift is half the budget.
+  // One fresh token per POST. The 1200s TTL makes caching viable, but at this
+  // volume it would save roughly one call a night and add expiry arithmetic.
   const sendOnce = async (swipes: ZingSwipe[]): Promise<SyncVerdict> => {
     stats.calls++;
     const token = await client.authenticate();
@@ -173,7 +177,39 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
         break;
       }
 
-      // Rejected. The server judged it, so bisection is safe and terminating.
+      // ---- rejected --------------------------------------------------------
+      // Preferred path: the server named the offending elements, so quarantine
+      // exactly those and re-send the rest. Two calls, exact attribution.
+      const named = verdict.failedIndices.filter((i) => i >= 0 && i < rows.length);
+      if (named.length > 0 && named.length < rows.length) {
+        const badIds = new Set(named.map((i) => rows[i]!.id));
+        const survivors = rows.filter((r) => !badIds.has(r.id));
+
+        repo.applyOutcomes(
+          named.map((i) => ({
+            swipeEventId: rows[i]!.id,
+            accepted: false,
+            // Structural rejection: the identical payload will be refused
+            // identically, so nightly retries would be pure noise.
+            permanent: true,
+            message: verdict.messages.join('; '),
+          })),
+          cfg.MAX_ATTEMPTS,
+          cfg.QUARANTINE_DAYS * 86_400_000,
+        );
+        stats.rejected += named.length;
+        log('publish.rejected.indexed', { indices: named, messages: verdict.messages });
+
+        // The survivors were never applied -- validation precedes insertion --
+        // so return them to the queue for the next claim rather than assuming
+        // partial delivery.
+        repo.releaseUnblamed(survivors.map((r) => r.id), 'batch rejected; peer element invalid', null);
+        settled = true;
+        break;
+      }
+
+      // Fallback: a batch-scoped complaint with no index. Bisection is safe
+      // here because the server judged the request rather than failing it.
       log('publish.bisect.start', { count: ids.length, messages: verdict.messages });
 
       let result;

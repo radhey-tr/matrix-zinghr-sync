@@ -159,13 +159,52 @@ describe('ambiguous sends are handled timidly', () => {
   });
 });
 
-describe('a rejected batch is bisected so the innocent still get delivered', () => {
+describe('a rejection naming its element skips bisection entirely', () => {
+  test('quarantines the named index and returns the rest to the queue', async () => {
+    stage(5);
+    let call = 0;
+    const { client, state } = fakeClient(async () => {
+      // First call: the real server shape — HTTP 400, code 0, indexed data.
+      if (++call === 1) {
+        return {
+          kind: 'rejected',
+          messages: ['swipes[2].SwipeDateTime: SwipeDateTime must be in  yyyy-MM-dd HH:mm:ss format'],
+          failedIndices: [2],
+        };
+      }
+      return { kind: 'accepted' };
+    });
+
+    const stats = await publish(deps(client));
+
+    assert.equal(stats.rejected, 1, 'exactly the named element');
+    assert.equal(stats.sent, 4, 'the other four still get delivered');
+    assert.equal(states()['abandoned'], 1);
+    assert.equal(states()['sent'], 4);
+    assert.equal(state.posts, 2, 'one rejection plus one resend — no bisection');
+  });
+
+  test('a batch-scoped complaint with no index still falls back to bisection', async () => {
+    stage(8);
+    const { client, state } = fakeClient(async (swipes) =>
+      swipes.some((s) => s.empIdentification === 'EMP005')
+        ? { kind: 'rejected', messages: ['Swipes required'], failedIndices: [] }
+        : { kind: 'accepted' },
+    );
+    const stats = await publish(deps(client));
+    assert.equal(stats.sent, 7);
+    assert.equal(stats.rejected, 1);
+    assert.ok(state.posts > 2, 'bisection remains available when nothing is named');
+  });
+});
+
+describe('bisection fallback delivers the innocent', () => {
   test('isolates the culprit and sends the rest', async () => {
     stage(8);
     const poison = 'EMP005';
     const { client, state } = fakeClient(async (swipes) =>
       swipes.some((s) => s.empIdentification === poison)
-        ? { kind: 'rejected', messages: ['SwipeDateTime is required'] }
+        ? { kind: 'rejected', messages: ['SwipeDateTime is required'], failedIndices: [] }
         : { kind: 'accepted' },
     );
 
@@ -188,7 +227,7 @@ describe('a rejected batch is bisected so the innocent still get delivered', () 
     stage(4);
     const { client, state } = fakeClient(async (swipes) =>
       swipes.some((s) => s.empIdentification === 'EMP002')
-        ? { kind: 'rejected', messages: ['bad'] }
+        ? { kind: 'rejected', messages: ['bad'], failedIndices: [] }
         : { kind: 'accepted' },
     );
     await publish(deps(client));

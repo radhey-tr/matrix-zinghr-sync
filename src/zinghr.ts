@@ -56,8 +56,16 @@ export class ZingProtocolError extends Error {}
 
 export type SyncVerdict =
   | { kind: 'accepted' }
-  /** Batch structurally invalid. Same payload will fail identically. */
-  | { kind: 'rejected'; messages: string[] }
+  /**
+   * Batch structurally invalid. Validation runs before any insert, so NOTHING
+   * in the array was applied — including elements that were themselves fine.
+   *
+   * `failedIndices` are positions parsed out of the `data` keys, which look
+   * like `swipes[1].SwipeDateTime`. When present the caller can quarantine
+   * exactly those and re-send the remainder. When empty the complaint is
+   * batch-scoped (e.g. "Swipes required") and bisection is the fallback.
+   */
+  | { kind: 'rejected'; messages: string[]; failedIndices: number[] }
   /** Over the 5000 cap — split and resend rather than bisect for a culprit. */
   | { kind: 'too_large'; messages: string[] };
 
@@ -77,6 +85,19 @@ function messagesFrom(envelope: Envelope): string[] {
 
 const TOO_LARGE = /maximum\s+\d+\s+swipes/i;
 
+/** `swipes[12].SwipeDateTime` -> 12. Undocumented; observed on UAT. */
+const ELEMENT_INDEX = /(?:^|[^a-z])swipes?\[(\d+)\]/i;
+
+function failedIndicesFrom(data: unknown): number[] {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return [];
+  const found = new Set<number>();
+  for (const key of Object.keys(data as Record<string, unknown>)) {
+    const m = ELEMENT_INDEX.exec(key);
+    if (m) found.add(Number(m[1]));
+  }
+  return [...found].sort((a, b) => a - b);
+}
+
 export class ZingHrClient {
   private readonly cfg: Config;
 
@@ -87,10 +108,11 @@ export class ZingHrClient {
   /**
    * Fetch a token. Deliberately NOT cached.
    *
-   * The token lives ~2 minutes and issuing a new one invalidates the previous,
-   * so cache-and-refresh logic would compare their `exp` against our clock,
-   * where a minute of drift is half the budget. One token per POST removes the
-   * arithmetic, the skew, and any chance of two live tokens.
+   * Measured on UAT the token lives 1200s and issuing a new one does NOT
+   * revoke the previous, so neither of the original reasons for this holds.
+   * It stays because at ~150 swipes/day a run is usually one batch, making
+   * this a single extra call that removes expiry arithmetic and clock skew
+   * from the system entirely.
    */
   async authenticate(): Promise<string> {
     const url = new URL(this.cfg.ZINGHR_AUTH_URL);
@@ -156,6 +178,9 @@ export class ZingHrClient {
     }
     if (res.statusCode >= 500) {
       // Server answered and declined: we know it did not apply the batch.
+      // Note a 500 is not proof of a transient fault — a structurally wrong
+      // request body produces one too. We always send the correct root key,
+      // so retrying is right here, but the inference is not general.
       throw Object.assign(new Error(`HTTP ${res.statusCode}: ${summarise(text)}`), {
         code: 'ZING_SERVER_ERROR',
         statusCode: res.statusCode,
@@ -179,7 +204,7 @@ export function interpretSyncBody(text: string): SyncVerdict {
 
   const messages = messagesFrom(env);
   if (messages.some((m) => TOO_LARGE.test(m))) return { kind: 'too_large', messages };
-  return { kind: 'rejected', messages };
+  return { kind: 'rejected', messages, failedIndices: failedIndicesFrom(env.data) };
 }
 
 function parseEnvelope(text: string, what: string): Envelope {

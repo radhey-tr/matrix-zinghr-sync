@@ -74,11 +74,11 @@ ZingHR does with a code it does not recognise is theirs to own. Consequences:
 
 1. **`Code`, not HTTP status, decides success.** Exactly the 200-with-failure-body
    case. Never infer delivery from a 2xx.
-2. **No per-record attribution documented.** `Data` is "all the validation
-   messages" with no element index. Bisection is therefore mandatory, not a
-   fallback. VERIFY on UAT — `Data` may carry indices the doc does not mention.
-3. **Hard cap 5000 per call.** Batch size is bounded by this AND by the 2-minute
-   token window; smaller batches also make bisection cheaper.
+2. ~~No per-record attribution documented.~~ **The doc is incomplete: `data`
+   DOES carry element indices** (`swipes[1].SwipeDateTime`). Verified on UAT;
+   see the probe results below. Bisection was demoted to a fallback.
+3. **Hard cap 5000 per call.** Batch size is bounded by this. (The "2-minute
+   token window" assumed here was wrong — see the probe results below.)
 4. **No documented "unknown employee" error.** Every documented validation is
    structural. Either unmapped employees are accepted and orphaned downstream,
    or it is undocumented. MUST be tested on UAT — if such a swipe returns
@@ -232,3 +232,61 @@ against this template:
 | p95 / max arrival lag | 5.00 / 6.44 days |
 | `SWEEP_DAYS=10` covers the max lag | yes |
 | employee code length vs ZingHR's 20 | max 12 |
+
+---
+
+# ZingHR — probe results (UAT, 2026-08-27)
+
+Four things the PDF got wrong or omitted. Two changed the code.
+
+## 1. Rejections ARE indexed per element
+
+    {"code":0,"message":"Validation Error",
+     "data":{"swipes[1].SwipeDateTime":["SwipeDateTime must be in  yyyy-MM-dd HH:mm:ss format"]}}
+
+The `data` keys carry the array index: `swipes[1].SwipeDateTime`. The PDF's
+error table lists only bare message strings, which is why bisection was built.
+
+**Bisection is now the fallback, not the primary path.** A rejection is parsed
+for `swipes[N]` indices; those records are quarantined and the remainder is
+re-sent in one further call — 2 calls instead of ~8, with exact attribution.
+Bisection still runs when a rejection carries no index, e.g. `{"swipes":
+["Swipes required"]}`, which is batch-scoped rather than element-scoped.
+
+## 2. The batch is atomic
+
+The mixed batch returned **HTTP 400** naming only `swipes[1]`; the two valid
+swipes at indices 0 and 2 were not processed. Validation runs before any
+insert, so a single bad element rejects the whole array. Hence: quarantine the
+named indices, then re-send everything else.
+
+## 3. Validation errors are HTTP 400, and a malformed body is HTTP 500
+
+| request | status | body |
+|---|---|---|
+| element fails validation | 400 | `code:0`, indexed `data` |
+| empty `swipes` array | 400 | `code:0`, `{"swipes":["Swipes required"]}` |
+| wrong root key (`swipe`) | **500** | `code:0`, `message:"An unexpected error occurred."`, `data:null` |
+
+A 500 is therefore not proof of a transient fault — it is also what a
+structurally wrong request produces. We always send the correct root key, so
+treating 5xx as transient stays right, but it is not a safe inference in general.
+
+## 4. The token lives 20 minutes and does NOT invalidate its predecessor
+
+Decoded from the JWT itself: `exp - iat = 1200` seconds. The PDF says "valid
+for only few minutes"; the working note said 2 minutes. Both understate it.
+
+Token A was used successfully **after** token B had been issued — `code: 1`.
+Issuing a new token does not revoke the old one.
+
+Consequences:
+
+- The "2-minute window" no longer bounds `BATCH_SIZE`. The server's 5000 cap
+  and bisection-fallback cost are the real bounds.
+- Serial publishing is no longer *required* by token mechanics. It is retained
+  because volume is tiny (~150 swipes/day; one batch usually covers a week)
+  and concurrency would add complexity for no gain — a deliberate choice now,
+  not a constraint.
+- Per-POST authentication is retained: at this volume it is typically one extra
+  call per run, and it avoids expiry arithmetic and clock-skew entirely.

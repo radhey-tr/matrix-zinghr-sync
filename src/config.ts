@@ -83,14 +83,17 @@ const ConfigSchema = z.object({
 
   // ---- Publishing --------------------------------------------------------
   /**
-   * Bounded three ways: the server's documented 5000 cap, the 2-minute token
-   * window each POST must start inside, and bisection cost — a rejected batch
-   * carries no element index, so smaller batches make the culprit cheaper to find.
+   * Bounded by the server's documented 5000 cap. The token window is NOT a
+   * constraint — measured at 1200s, not the 2 minutes the docs imply. Rejections
+   * carry element indices, so a bad record is identified without bisection and
+   * batch size no longer drives failure-attribution cost either.
    */
   BATCH_SIZE: z.coerce.number().int().min(1).max(5000).default(500),
   /**
-   * Hard constraint, not a tuning knob. Issuing a ZingHR token invalidates the
-   * previous one, so concurrent batches would void each other's credentials.
+   * A deliberate choice, not a constraint. Issuing a token does NOT invalidate
+   * the previous one (verified on UAT), so concurrency would be safe — but at
+   * ~150 swipes/day a single batch usually covers a week, and parallelism would
+   * add moving parts for no gain.
    */
   CONCURRENCY: z.literal(1).or(z.coerce.number().int().max(1)).default(1),
 
