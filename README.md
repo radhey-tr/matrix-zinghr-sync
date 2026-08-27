@@ -64,6 +64,28 @@ row raw and mapped. Edit `.env`, re-run, done.
 under `MM/DD` and August 3rd under `DD/MM`. Guessing wrong shifts attendance by
 months with no error anywhere.
 
+## Dry run vs live
+
+`DRY_RUN` controls one thing: whether the publisher is invoked.
+
+|  | `DRY_RUN=true` | `DRY_RUN=false` |
+|---|---|---|
+| Fetch COSEC | yes | yes |
+| Map + validate rows | yes | yes |
+| Write to the local ledger | yes | yes |
+| Call ZingHR | **never** | yes |
+| Swipes end as | `pending` | `sent` |
+
+So a dry run exercises everything except delivery, and is safe to point at
+production COSEC. It still writes the ledger, which is the point: you can
+inspect exactly what would have been sent with `npm run cli pending`.
+
+**Swipes staged during a dry run are not discarded.** They stay `pending`, so
+the first live run afterwards delivers the whole accumulated backlog at once.
+That is usually what you want after a shadow run — but if you dry-ran for a
+fortnight and only want yesterday, clear the ledger (`rm sync.db`) before
+going live.
+
 ## Behaviour worth knowing
 
 - **Success is `code: 1` in the response body, not the HTTP status.** ZingHR

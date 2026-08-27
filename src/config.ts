@@ -27,9 +27,9 @@ const ConfigSchema = z.object({
   /** JSON property wrapping the row array. */
   COSEC_RESPONSE_KEY: z.string().min(1).default('template-data'),
   /**
-   * Column carrying ZingHR's employee code. NEEDS CLIENT CONFIRMATION — the
-   * one mapping that would silently send correct-looking data for the wrong
-   * people. UAT `userid` holds values like `10001` and `SCIPL2`.
+   * Column carrying ZingHR's employee code. Confirmed 2026-08-27: COSEC's
+   * `userid` IS the ZingHR employee code. 129 distinct values in UAT, max
+   * length 12, inside ZingHR's 20-char limit.
    */
   COSEC_FIELD_EMP: z.string().min(1).default('userid'),
   /** Column carrying the swipe timestamp. */

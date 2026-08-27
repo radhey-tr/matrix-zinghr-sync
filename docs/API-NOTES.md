@@ -161,20 +161,28 @@ because `indexno` dedupes at the database level.
 
 ## Open
 
-- **Which field is ZingHR's employee code?** `userid` (2349) or `indexno`?
-  `indexno` is per-record so it cannot be the person; `userid` is 1:127 across
-  the sample and is the only plausible candidate. Configurable via
-  `COSEC_EMP_FIELD`, defaulting to `userid`. NEEDS CLIENT CONFIRMATION before
-  production — this is the one mapping that would silently send wrong data.
+- ~~Which field is ZingHR's employee code?~~ **CONFIRMED 2026-08-27: `userid`.**
+  129 distinct values in UAT, max length 12, within ZingHR's 20-char limit.
 - No pagination or truncation observed (3,906 rows in a single response). No
   documented cap; the truncation guard stays in as a precaution.
 
-## Security
+## Security — accepted risk
 
-The endpoint is **plain HTTP on a public IP** with basic auth, so
-`sm:admin123` crosses the internet base64-encoded and trivially readable, and
-the credentials are guessable. Raise with Matrix/the client: HTTPS, a
-non-default credential, and IP allowlisting on port 818.
+The endpoint is **plain HTTP on a public IP** with basic auth, so the
+credentials cross the internet base64-encoded and readable by anyone on the
+path. Raised 2026-08-27; **the endpoint is what it is and cannot be changed.**
+Recorded as an accepted risk, not an open action.
+
+What remains on our side, and is done:
+
+- credentials live only in `.env`, which is gitignored; `.env.example` carries
+  placeholders
+- the logger redacts `password` / `authorization` / `token` paths, so
+  credentials cannot reach logs or the daily report
+- the ledger stores no COSEC credentials
+
+Worth knowing rather than acting on: an interceptor could read swipe data and
+the COSEC credentials in transit. That is the client's risk to carry.
 
 ## OBSERVED: the COSEC column set changes under you
 
