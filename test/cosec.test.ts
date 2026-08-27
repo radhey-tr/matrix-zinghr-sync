@@ -133,6 +133,31 @@ describe('mapping to the ledger', () => {
     assert.equal(s.terminalId, 'D7');
   });
 
+  test('columns we do not use are ignored, present or absent', () => {
+    // Template 133 briefly carried userid1/indexno1/username1/eventdatetime1
+    // and then stopped, mid-development, without notice. Neither shape may
+    // disturb the mapping.
+    const withExtras = {
+      ...rows[0]!,
+      userid1: '2349', username1: 'SAMPLE NAME A', indexno1: '555270',
+      eventdatetime1: '08/01/2026 05:58:10', somethingNew: 'x',
+    };
+    assert.deepEqual(
+      JSON.parse(toStageable(withExtras, shape).payloadJson),
+      JSON.parse(toStageable(rows[0]!, shape).payloadJson),
+    );
+  });
+
+  test('a renamed column we DO depend on fails loudly, never silently', () => {
+    // The failure that matters: if COSEC renames the identity or timestamp
+    // column, every row must throw so the run reports thousands of unmappable
+    // rows -- rather than staging swipes with a wrong or missing key.
+    const renamed = { ...rows[0]! } as Record<string, unknown>;
+    renamed['swipe_index'] = renamed['indexno'];
+    delete renamed['indexno'];
+    assert.throws(() => toStageable(renamed, shape), CosecError);
+  });
+
   test('a row with no identity value is refused', () => {
     assert.throws(() => toStageable({ ...rows[0]!, indexno: '  ' }, shape), CosecError);
   });

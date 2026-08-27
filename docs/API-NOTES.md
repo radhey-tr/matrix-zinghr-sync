@@ -207,3 +207,20 @@ stays incomplete and retries; nothing is silently dropped or wrongly sent.
 
 Recovery is an .env edit plus `npm run doctor` to confirm, then the next run
 picks the day up. No code change, no release.
+
+### Final column set (confirmed 2026-08-27)
+
+    template-id, userid, username, indexno,
+    eventdatetime, entryexittype, idatetime, mastercontrollerid
+
+Consistent across all 3,923 rows of a 27-day fetch. The shipped defaults
+already match it, so no configuration change was required. Re-validated
+against this template:
+
+| assumption | result |
+|---|---|
+| `indexno` unique | 3923 / 3923 |
+| swipes recorded >24h after the event | 22.8% |
+| p95 / max arrival lag | 5.00 / 6.44 days |
+| `SWEEP_DAYS=10` covers the max lag | yes |
+| employee code length vs ZingHR's 20 | max 12 |
