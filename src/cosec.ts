@@ -39,6 +39,7 @@ export function shapeFrom(cfg: Config): CosecShape {
       uniqueId: cfg.COSEC_FIELD_UNIQUE,
       terminal: cfg.COSEC_FIELD_TERMINAL || undefined,
       receivedAt: cfg.COSEC_FIELD_RECEIVED || undefined,
+      inOut: cfg.COSEC_FIELD_INOUT || undefined,
     },
     dateFormat: compileDateFormat(cfg.COSEC_DATETIME_FORMAT),
   };
@@ -148,6 +149,28 @@ export function toStageable(row: CosecRow, shape: CosecShape): StageableSwipe {
   const terminalId = field(row, f.terminal) || 'UNKNOWN';
 
   const payload: ZingSwipe = { empIdentification: emp, swipeDateTime, uniqueId, terminalId };
+
+  // ZingHR validates swipeReceiveDateTime's format and the batch is ATOMIC, so
+  // one malformed value would reject every good swipe alongside it. Emit it
+  // only when it parses cleanly: the field is optional to ZingHR, so a swipe
+  // with an unreadable receive time still delivers on its mandatory fields.
+  // A record is never failed over an optional field.
+  const rawReceived = field(row, f.receivedAt);
+  if (rawReceived) {
+    try {
+      payload.swipeReceiveDateTime = parseDateTime(rawReceived, shape.dateFormat);
+    } catch {
+      // Deliberately swallowed. Counted by the caller via unmappable? No --
+      // the swipe itself is fine. Dropping one optional field beats losing
+      // the swipe, and beats losing its whole batch.
+    }
+  }
+
+  // Passed through verbatim, never interpreted. ZingHR documents no validation
+  // on this field and no enumeration, so we make no assumption about what the
+  // values mean on either side.
+  const inOut = field(row, f.inOut);
+  if (inOut) payload.inOutFlag = inOut;
 
   return {
     attendanceDate: swipeDateTime.slice(0, 10),

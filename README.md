@@ -95,13 +95,18 @@ going live.
 
 ## What is sent to ZingHR
 
-Four fields per swipe — `empIdentification` and `swipeDateTime` (both required
-by ZingHR), plus `uniqueId` and `terminalId` for traceability.
+Six fields per swipe — `empIdentification` and `swipeDateTime` (both required
+by ZingHR), plus `uniqueId`, `terminalId`, `swipeReceiveDateTime` and
+`inOutFlag`.
 
-**Employee names are never sent.** COSEC's `username` stays local, as do
-`entryexittype`, `template-id`, and `idatetime` — the last withheld
-deliberately, since its format validation could reject a whole batch for no
-benefit. Full table and rationale: [`docs/API-NOTES.md`](docs/API-NOTES.md).
+**Employee names are never sent.** COSEC's `username` stays local, as does
+`template-id`. Full table and rationale:
+[`docs/API-NOTES.md`](docs/API-NOTES.md).
+
+`swipeReceiveDateTime` is emitted only when it parses cleanly — ZingHR
+validates its format and the batch is atomic, so one bad value would reject
+every good swipe with it. `COSEC_FIELD_RECEIVED` and `COSEC_FIELD_INOUT` can be
+cleared to stop sending either field without a code change.
 
 `npm run doctor <date>` prints one row raw and mapped, against live data.
 

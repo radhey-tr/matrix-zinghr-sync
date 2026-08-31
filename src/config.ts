@@ -41,8 +41,17 @@ const ConfigSchema = z.object({
   COSEC_FIELD_UNIQUE: z.string().min(1).default('indexno'),
   /** Optional: reader/controller identity, kept locally for diagnosis. */
   COSEC_FIELD_TERMINAL: z.string().default('mastercontrollerid'),
-  /** Optional: when COSEC recorded the swipe. Drives the arrival-lag report. */
+  /**
+   * When COSEC recorded the swipe. Drives the arrival-lag report AND is sent
+   * to ZingHR as `swipeReceiveDateTime`. Set empty to stop sending it.
+   */
   COSEC_FIELD_RECEIVED: z.string().default('idatetime'),
+  /**
+   * Direction column, sent to ZingHR as `inOutFlag`. Set empty to stop
+   * sending it — worth knowing that on UAT this column is 98.2% a single
+   * value, so it may not be a usable direction indicator (see API-NOTES).
+   */
+  COSEC_FIELD_INOUT: z.string().default('entryexittype'),
   /**
    * Timestamp layout in COSEC's output. Stated explicitly because MM/DD and
    * DD/MM are indistinguishable for the first twelve days of a month — a

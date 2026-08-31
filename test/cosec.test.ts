@@ -18,6 +18,7 @@ const cfg = {
   COSEC_FIELD_UNIQUE: 'indexno',
   COSEC_FIELD_TERMINAL: 'mastercontrollerid',
   COSEC_FIELD_RECEIVED: 'idatetime',
+  COSEC_FIELD_INOUT: 'entryexittype',
   COSEC_DATETIME_FORMAT: 'MM/DD/YYYY HH:mm:ss',
 } as unknown as Config;
 
@@ -107,11 +108,40 @@ describe('mapping to the ledger', () => {
     assert.equal(s.terminalId, '2113');
   });
 
-  test('the sent payload carries only what ZingHR uses, plus traceability', () => {
+  test('the sent payload carries the six mapped fields and nothing else', () => {
     const p = JSON.parse(toStageable(rows[0]!, shape).payloadJson);
-    assert.deepEqual(Object.keys(p).sort(), ['empIdentification', 'swipeDateTime', 'terminalId', 'uniqueId']);
+    assert.deepEqual(Object.keys(p).sort(), [
+      'empIdentification', 'inOutFlag', 'swipeDateTime',
+      'swipeReceiveDateTime', 'terminalId', 'uniqueId',
+    ]);
+    assert.equal(p.swipeReceiveDateTime, '2026-08-06 15:21:34', 'reformatted like swipeDateTime');
+    assert.equal(p.inOutFlag, '0', 'passed through verbatim, never interpreted');
     assert.ok(!('username' in p), 'employee names must never leave the building');
-    assert.ok(!('entryexittype' in p));
+    assert.ok(!('template-id' in p));
+  });
+
+  test('an unreadable receive time drops that field, never the swipe', () => {
+    // The batch is atomic, so emitting a malformed swipeReceiveDateTime would
+    // reject every good swipe alongside it. Losing one optional field beats
+    // losing the swipe, and beats losing its whole batch.
+    const p = JSON.parse(toStageable({ ...rows[0]!, idatetime: 'GARBAGE' }, shape).payloadJson);
+    assert.ok(!('swipeReceiveDateTime' in p), 'omitted rather than sent malformed');
+    assert.equal(p.empIdentification, '2349', 'the swipe itself still delivers');
+    assert.equal(p.swipeDateTime, '2026-08-01 05:58:10');
+  });
+
+  test('an absent receive time or direction is simply omitted', () => {
+    const p = JSON.parse(
+      toStageable({ ...rows[0]!, idatetime: '', entryexittype: '' }, shape).payloadJson,
+    );
+    assert.ok(!('swipeReceiveDateTime' in p));
+    assert.ok(!('inOutFlag' in p));
+  });
+
+  test('either field can be switched off by clearing its config', () => {
+    const off = shapeFrom({ ...cfg, COSEC_FIELD_RECEIVED: '', COSEC_FIELD_INOUT: '' } as unknown as Config);
+    const p = JSON.parse(toStageable(rows[0]!, off).payloadJson);
+    assert.deepEqual(Object.keys(p).sort(), ['empIdentification', 'swipeDateTime', 'terminalId', 'uniqueId']);
   });
 
   test('remapping every column is pure configuration', () => {

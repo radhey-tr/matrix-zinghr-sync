@@ -35,6 +35,15 @@ export interface ZingSwipe {
   /** Optional to ZingHR; sent only for cross-system traceability. */
   uniqueId?: string;
   terminalId?: string;
+  /**
+   * When COSEC recorded the swipe, as opposed to when it happened.
+   *
+   * ZingHR validates this field's format and rejects the WHOLE batch on a bad
+   * value, so it is emitted only when it parses cleanly — see toStageable.
+   */
+  swipeReceiveDateTime?: string;
+  /** Direction as COSEC reports it. Passed through, never interpreted. */
+  inOutFlag?: string;
 }
 
 export interface SwipeEventRow {

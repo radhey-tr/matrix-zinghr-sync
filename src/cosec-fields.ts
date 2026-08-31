@@ -26,6 +26,8 @@ export interface CosecFieldMap {
   terminal?: string | undefined;
   /** Optional: when COSEC recorded the swipe. Used to report arrival lag. */
   receivedAt?: string | undefined;
+  /** Optional: direction as COSEC reports it. */
+  inOut?: string | undefined;
 }
 
 interface CompiledFormat {

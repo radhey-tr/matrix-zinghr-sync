@@ -351,31 +351,70 @@ Four fields per swipe. Verified against live UAT data 2026-08-31.
         "terminalId":        "2075"
     } ] }
 
+Six fields as of 2026-08-31, when `swipeReceiveDateTime` and `inOutFlag` were
+added at the client's request.
+
 | sent | from COSEC | required by ZingHR | notes |
 |---|---|---|---|
 | `empIdentification` | `userid` | **yes** | max 20 chars; UAT max observed 12 |
 | `swipeDateTime` | `eventdatetime` | **yes** | reformatted `MM/DD/YYYY` → `yyyy-MM-dd` |
 | `uniqueId` | `indexno` | no | traceability across all three systems |
 | `terminalId` | `mastercontrollerid` | no | lets a support question name the reader |
+| `swipeReceiveDateTime` | `idatetime` | no | reformatted; **omitted if unparseable** — see below |
+| `inOutFlag` | `entryexittype` | no | passed through verbatim, never interpreted |
 
 | NOT sent | why |
 |---|---|
 | `username` | **Employee names never leave the building.** ZingHR already holds the name against the code; sending it is needless PII on the wire. |
-| `entryexittype` | ZingHR derives in/out from timings; its shift configuration owns that. |
-| `idatetime` | Kept locally to measure arrival lag. See below. |
 | `template-id` | COSEC-internal report id, meaningless to payroll. |
 
-## Why `swipeReceiveDateTime` is deliberately withheld
+Either optional field can be switched off without a code change by clearing
+`COSEC_FIELD_RECEIVED` or `COSEC_FIELD_INOUT`.
 
-ZingHR accepts the field and COSEC supplies the value (`idatetime`), so sending
-it would be the obvious default. It is withheld because the field carries its
-own format validation — `SwipeReceiveDateTime must be in yyyy-MM-dd HH:mm:ss
-format` — and **the batch is atomic**. One malformed receive-time would reject
-an entire batch of otherwise valid swipes.
+## `swipeReceiveDateTime` is emitted only when it parses
 
-ZingHR has no logic that uses it, so the trade is real downside for no benefit.
-The value is kept in the ledger instead, which is what the 22.8% late-arrival
-measurement is derived from.
+ZingHR validates this field's format and **the batch is atomic**, confirmed on
+UAT — sending one malformed value rejects every good swipe alongside it:
+
+    swipes[0].SwipeReceiveDateTime: ["SwipeReceiveDateTime must be in
+    yyyy-MM-dd HH:mm:ss format"]
+
+So `toStageable` parses it with the same strictness as `swipeDateTime` and
+**omits the field when it fails**, rather than passing it through or failing
+the record. The field is optional to ZingHR, so a swipe with an unreadable
+receive time still delivers on its mandatory fields. A swipe is never lost over
+an optional field, and one bad value can never take a batch down.
+
+All 3,923 rows in the August sample parsed cleanly, so this is a guard against
+future drift rather than a live problem.
+
+## `inOutFlag` may not mean what its name suggests
+
+Measured over 3,923 August rows:
+
+| value | count | share |
+|---|---|---|
+| `0` | 3,852 | 98.2% |
+| `1` | 71 | 1.8% |
+
+If `0`/`1` were IN/OUT you would expect most employee-days to contain both —
+people arrive and leave. They do not:
+
+- employee-days observed: **970**
+- containing both values: **10 (1.0%)**
+- containing a single value: **960 (99.0%)**
+
+So in this COSEC configuration `entryexittype` is almost certainly not a
+direction indicator; `0` reads as a default and `1` as something narrower,
+perhaps a specific exit reader.
+
+**This matters if ZingHR trusts the flag.** Its pairing currently works from
+timings alone. If supplying `inOutFlag` causes it to switch to trusting the
+flag, 98% of punches asserting the same direction could produce worse
+attendance than sending nothing. Worth confirming with ZingHR what they do with
+the field, and comparing a UAT attendance report before and after.
+
+Clearing `COSEC_FIELD_INOUT` disables it instantly if so.
 
 ## Volume on the wire
 
