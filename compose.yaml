@@ -1,0 +1,22 @@
+# UNVERIFIED: written without a running Docker daemon to build against.
+services:
+  sync:
+    build: .
+    image: matrix-zinghr-sync:latest
+    container_name: matrix-zinghr-sync
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Containers default to UTC. SCHEDULE is interpreted in TIMEZONE, but a
+      # wrong system zone still misfiles attendance dates.
+      TZ: ${TZ:-Asia/Kolkata}
+      DB_PATH: /data/sync.db
+      LOCK_PATH: /data/sync.lock
+    volumes:
+      - ledger:/data
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  ledger:

@@ -116,6 +116,11 @@ going live.
 walkthrough including the `better-sqlite3` native-module trap, NSSM service
 setup, and a Task Scheduler alternative.
 
+**Docker: [`docs/DEPLOY-DOCKER.md`](docs/DEPLOY-DOCKER.md)** — easy on Linux,
+more friction than it removes on Windows Server. Includes the question worth
+asking first: this service has no LAN dependency, so it may not need to run on
+the COSEC box at all.
+
 **Before going live: [`docs/PRODUCTION-CHECKLIST.md`](docs/PRODUCTION-CHECKLIST.md).**
 
 In short: a long-running process under a supervisor with restart-on-exit —

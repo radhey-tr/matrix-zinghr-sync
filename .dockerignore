@@ -1,0 +1,16 @@
+node_modules
+dist
+.git
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.lock
+uat-results
+audit
+logs
+test
+docs
+*.html
