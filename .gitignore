@@ -13,3 +13,5 @@ uat-results/
 scratch.db*
 scratch.lock
 dist/
+verify.db*
+verify.lock

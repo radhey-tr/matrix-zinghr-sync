@@ -291,6 +291,26 @@ Consequences:
 - Per-POST authentication is retained: at this volume it is typically one extra
   call per run, and it avoids expiry arithmetic and clock-skew entirely.
 
+## A day with no swipes answers in PLAIN TEXT, not JSON
+
+Observed 2026-08-31 for `date-range=30082026-30082026`:
+
+    success: 0290100000 : No records found
+
+Not an empty `template-data` array — a bare status line. Parsing it as JSON
+throws, which left the day stuck `pending`, retried nightly, and eventually
+escalated as `stalled`. **That would have fired on every Sunday, public holiday
+and quiet day**, and made the run report `partial` each time.
+
+`parseRows` now recognises it as a legitimate empty result and returns `[]`, so
+the day stages with `cosec_count = 0` and settles `complete`. The match is
+deliberately narrow — the body must BOTH report `success:` AND say `no records
+found` — so `error: ... : Invalid template id` still surfaces as an error.
+
+Safe against a spurious "no records" during COSEC maintenance: the day settles
+empty, but the sweep re-reads it for the next `SWEEP_DAYS` and will reopen it
+if swipes appear.
+
 ## COSEC volume and pagination (measured 2026-08-27)
 
 **COSEC does not paginate and does not cap.** A ten-year range returned

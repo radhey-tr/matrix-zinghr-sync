@@ -104,13 +104,35 @@ export class CosecClient {
   }
 }
 
+/**
+ * COSEC answers a day with no swipes in PLAIN TEXT, not JSON:
+ *
+ *     success: 0290100000 : No records found
+ *
+ * Treating that as a parse failure leaves the day stuck `pending`, retried
+ * every night and eventually escalated as stalled — which would fire on every
+ * Sunday, holiday and quiet day. It is a legitimate empty result.
+ *
+ * Matched narrowly: the body must both report success AND say no records, so a
+ * genuine error status still surfaces as an error.
+ */
+const NO_RECORDS = /no\s+records?\s+found/i;
+const STATUS_OK = /^\s*success\s*:/i;
+
+export function isEmptyResult(text: string): boolean {
+  return NO_RECORDS.test(text) && STATUS_OK.test(text);
+}
+
 export function parseRows(text: string, responseKey: string): CosecRow[] {
+  if (isEmptyResult(text)) return [];
+
   let json: unknown;
   try {
     json = JSON.parse(text);
   } catch {
-    // An HTML error page, or a body cut off mid-flight. Staging a partial day
-    // and then marking it complete is the one way this design loses data.
+    // An HTML error page, a COSEC status line reporting something other than
+    // "no records", or a body cut off mid-flight. Staging a partial day and
+    // then marking it complete is the one way this design loses data.
     throw new CosecError(`COSEC response was not JSON: ${summarise(text)}`);
   }
   const parsed = z

@@ -9,7 +9,9 @@
  *   replay          return quarantined/abandoned swipes to the queue
  *   pending [n]     show payloads that would go next
  *   vacuum          reclaim disk space after pruning
+ *   manifest [out]  CSV of everything delivered, for the other side to verify
  */
+import { writeFileSync } from 'node:fs';
 import { loadConfig } from './config.ts';
 import { migrate, openDb } from './db/index.ts';
 import { Repo } from './db/repo.ts';
@@ -163,6 +165,73 @@ switch (cmd) {
     break;
   }
 
+  /**
+   * Evidence of delivery, in a form another team can act on. Answers "did you
+   * actually send us anything for employee X" without either side reading logs.
+   */
+  case 'manifest': {
+    const out = args[0] ?? 'manifest.csv';
+    const rows = db
+      .prepare(
+        `SELECT emp_identification, attendance_date, swipe_datetime, unique_id,
+                terminal_id, state, sent_at, payload_json
+         FROM swipe_event
+         WHERE state = 'sent'
+         ORDER BY emp_identification, swipe_datetime`,
+      )
+      .all() as Array<Record<string, string | number | null>>;
+
+    if (rows.length === 0) {
+      console.log('Nothing delivered yet — run a live sync first.');
+      break;
+    }
+
+    const esc = (v: unknown) => {
+      const t = v === null || v === undefined ? '' : String(v);
+      return /[",\n]/.test(t) ? `"${t.replace(/"/g, '""')}"` : t;
+    };
+    const header = [
+      'empIdentification', 'attendanceDate', 'swipeDateTime', 'uniqueId',
+      'terminalId', 'swipeReceiveDateTime', 'inOutFlag', 'deliveredAtUtc',
+    ];
+    const lines = [header.join(',')];
+    for (const r of rows) {
+      const p = JSON.parse(String(r.payload_json)) as Record<string, string>;
+      lines.push([
+        r.emp_identification, r.attendance_date, r.swipe_datetime, r.unique_id,
+        r.terminal_id, p.swipeReceiveDateTime ?? '', p.inOutFlag ?? '',
+        r.sent_at ? new Date(Number(r.sent_at)).toISOString() : '',
+      ].map(esc).join(','));
+    }
+    writeFileSync(out, lines.join('\n') + '\n');
+
+    const byEmp = new Map<string, number>();
+    const dates = new Set<string>();
+    for (const r of rows) {
+      const e = String(r.emp_identification);
+      byEmp.set(e, (byEmp.get(e) ?? 0) + 1);
+      dates.add(String(r.attendance_date));
+    }
+    const sortedDates = [...dates].sort();
+
+    console.log(`Delivered to ZingHR ${cfg.ENVIRONMENT.toUpperCase()}`);
+    console.log(`  swipes          ${rows.length}`);
+    console.log(`  employees       ${byEmp.size}`);
+    console.log(`  attendance days ${sortedDates.length}  (${sortedDates[0]} .. ${sortedDates[sortedDates.length - 1]})`);
+    console.log(`  written to      ${out}\n`);
+    console.log('Per employee (top 25 by volume):');
+    console.log(`  ${pad('empIdentification', 22)}${pad('swipes', 8)}first .. last`);
+    for (const [emp, n] of [...byEmp].sort((a, b) => b[1] - a[1]).slice(0, 25)) {
+      const mine = rows.filter((r) => r.emp_identification === emp);
+      console.log(
+        `  ${pad(emp, 22)}${pad(String(n), 8)}` +
+        `${String(mine[0]!.swipe_datetime)} .. ${String(mine[mine.length - 1]!.swipe_datetime)}`,
+      );
+    }
+    if (byEmp.size > 25) console.log(`  ... and ${byEmp.size - 25} more (full list in ${out})`);
+    break;
+  }
+
   case 'vacuum': {
     // Pruning frees pages for reuse but does not shrink the file. Only worth
     // running if the disk is actually tight: VACUUM rewrites the whole
@@ -178,7 +247,7 @@ switch (cmd) {
 
   default:
     console.error(`unknown command: ${cmd}`);
-    console.error('try: doctor | status | day <date> | reopen <date> | replay | pending [n] | vacuum');
+    console.error('try: doctor | status | day <date> | reopen <date> | replay | pending [n] | manifest [out] | vacuum');
     process.exit(2);
 }
 

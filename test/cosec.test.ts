@@ -216,3 +216,33 @@ describe('two swipes one second apart are distinct records', () => {
     assert.equal(repo.stageSwipes(mapped), 0, 're-reading is still a no-op');
   });
 });
+
+describe('a day with no swipes is not an error', () => {
+  // Verbatim from COSEC UAT for 2026-08-30. Plain text, not JSON.
+  const EMPTY = 'success: 0290100000 : No records found';
+
+  test('the plain-text empty response yields zero rows', () => {
+    assert.deepEqual(parseRows(EMPTY, 'template-data'), []);
+  });
+
+  test('so a Sunday or holiday settles instead of stalling', () => {
+    // Before this was handled the day stayed `pending`, was retried nightly,
+    // and eventually escalated as stalled — a false alarm most weeks.
+    assert.doesNotThrow(() => parseRows(EMPTY, 'template-data'));
+  });
+
+  test('a genuine error is still an error', () => {
+    for (const bad of [
+      'error: 0290100001 : Invalid template id',
+      'failure: something went wrong',
+      '<html>502 Bad Gateway</html>',
+      'No records found',            // no success status — do not trust it
+    ]) {
+      assert.throws(() => parseRows(bad, 'template-data'), CosecError, `should reject: ${bad}`);
+    }
+  });
+
+  test('a normal JSON response is unaffected', () => {
+    assert.equal(parseRows(SAMPLE, 'template-data').length, 3);
+  });
+});
