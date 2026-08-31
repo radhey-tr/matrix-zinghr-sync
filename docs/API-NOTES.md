@@ -337,3 +337,50 @@ No pagination logic is needed, since each day arrives complete.
 no longer drives failure-attribution cost; the remaining reason not to go
 straight to the 5000 cap is that a batch-scoped rejection carrying no index
 still falls back to bisection.
+
+---
+
+# What is actually sent to ZingHR
+
+Four fields per swipe. Verified against live UAT data 2026-08-31.
+
+    { "swipes": [ {
+        "empIdentification": "SCIPL2",
+        "swipeDateTime":     "2026-08-20 10:57:07",
+        "uniqueId":          "579848",
+        "terminalId":        "2075"
+    } ] }
+
+| sent | from COSEC | required by ZingHR | notes |
+|---|---|---|---|
+| `empIdentification` | `userid` | **yes** | max 20 chars; UAT max observed 12 |
+| `swipeDateTime` | `eventdatetime` | **yes** | reformatted `MM/DD/YYYY` → `yyyy-MM-dd` |
+| `uniqueId` | `indexno` | no | traceability across all three systems |
+| `terminalId` | `mastercontrollerid` | no | lets a support question name the reader |
+
+| NOT sent | why |
+|---|---|
+| `username` | **Employee names never leave the building.** ZingHR already holds the name against the code; sending it is needless PII on the wire. |
+| `entryexittype` | ZingHR derives in/out from timings; its shift configuration owns that. |
+| `idatetime` | Kept locally to measure arrival lag. See below. |
+| `template-id` | COSEC-internal report id, meaningless to payroll. |
+
+## Why `swipeReceiveDateTime` is deliberately withheld
+
+ZingHR accepts the field and COSEC supplies the value (`idatetime`), so sending
+it would be the obvious default. It is withheld because the field carries its
+own format validation — `SwipeReceiveDateTime must be in yyyy-MM-dd HH:mm:ss
+format` — and **the batch is atomic**. One malformed receive-time would reject
+an entire batch of otherwise valid swipes.
+
+ZingHR has no logic that uses it, so the trade is real downside for no benefit.
+The value is kept in the ledger instead, which is what the 22.8% late-arrival
+measurement is derived from.
+
+## Volume on the wire
+
+~110 bytes per swipe, so roughly **2.2 MB of request body per day** at 20k
+swipes — about 20 POSTs at `BATCH_SIZE=1000`.
+
+To see this for any date against live data: `npm run doctor <YYYY-MM-DD>`
+prints one row raw and mapped.

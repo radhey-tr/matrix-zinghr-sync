@@ -93,6 +93,18 @@ That is usually what you want after a shadow run — but if you dry-ran for a
 fortnight and only want yesterday, clear the ledger (`rm sync.db`) before
 going live.
 
+## What is sent to ZingHR
+
+Four fields per swipe — `empIdentification` and `swipeDateTime` (both required
+by ZingHR), plus `uniqueId` and `terminalId` for traceability.
+
+**Employee names are never sent.** COSEC's `username` stays local, as do
+`entryexittype`, `template-id`, and `idatetime` — the last withheld
+deliberately, since its format validation could reject a whole batch for no
+benefit. Full table and rationale: [`docs/API-NOTES.md`](docs/API-NOTES.md).
+
+`npm run doctor <date>` prints one row raw and mapped, against live data.
+
 ## Behaviour worth knowing
 
 - **Success is `code: 1` in the response body, not the HTTP status.** ZingHR
