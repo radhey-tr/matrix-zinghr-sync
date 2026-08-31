@@ -46,6 +46,7 @@ because the identity column dedupes at the database level.
     npm run doctor [date]       COSEC shape vs configured mapping
     npm run cli day 2026-08-25  detail for one date
     npm run cli reopen <date>   re-fetch a settled day (sends only new rows)
+    npm run cli queue <date>    force a date in: today, or one the sweep has passed
     npm run cli replay          return quarantined/abandoned swipes to the queue
     npm run cli pending [n]     payloads that would go next
 

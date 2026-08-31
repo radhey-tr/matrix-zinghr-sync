@@ -6,6 +6,7 @@
  *   status          ledger state at a glance
  *   day <date>      detail for one attendance date
  *   reopen <date>   re-fetch and re-publish a settled day
+ *   queue <date>    force a date into the queue (today, or older than the sweep)
  *   replay          return quarantined/abandoned swipes to the queue
  *   pending [n]     show payloads that would go next
  *   vacuum          reclaim disk space after pruning
@@ -145,6 +146,57 @@ switch (cmd) {
     break;
   }
 
+  /**
+   * Force a date into the queue.
+   *
+   * A run reaches yesterday and the SWEEP_DAYS window behind it, and nothing
+   * else -- so today, or a date that has fallen out of the sweep, cannot be
+   * fetched by waiting. `reopen` cannot help: it UPDATEs a row that does not
+   * exist yet for a date the scheduler has never seen.
+   */
+  case 'queue': {
+    const date = args[0];
+    if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      console.error('usage: queue <YYYY-MM-DD>');
+      process.exit(2);
+    }
+    const today = todayIso(new Date(), cfg.TIMEZONE);
+    if (date > today) {
+      console.error(`${date} is in the future (today is ${today}) -- nothing to fetch.`);
+      process.exit(2);
+    }
+
+    db.prepare(
+      `INSERT INTO sync_day (attendance_date, state, created_at)
+       VALUES (?, 'pending', ?)
+       ON CONFLICT (attendance_date) DO UPDATE SET state='pending', completed_at=NULL`,
+    ).run(date, Date.now());
+    console.log(`${date} queued — it will be fetched on the next run.`);
+
+    if (date === today) {
+      console.log('Today is still in progress; the sweep picks up later swipes tomorrow.');
+    }
+
+    // Days are processed oldest-first, so a backlog can starve the date the
+    // operator just asked for. Saying so beats a run that silently skips it.
+    const ahead = (
+      db
+        .prepare(
+          `SELECT COUNT(*) n FROM sync_day
+           WHERE state != 'complete' AND attendance_date < ?`,
+        )
+        .get(date) as { n: number }
+    ).n;
+    if (ahead >= cfg.MAX_DAYS_PER_RUN) {
+      console.log(
+        `Warning: ${ahead} older incomplete day(s) are queued ahead of it and ` +
+          `MAX_DAYS_PER_RUN=${cfg.MAX_DAYS_PER_RUN}, so the next run will not ` +
+          `reach ${date}. Raise MAX_DAYS_PER_RUN or clear the backlog first.`,
+      );
+    }
+    break;
+  }
+
   case 'replay': {
     const n = db
       .prepare(`UPDATE swipe_event SET state='pending', next_attempt_at=NULL, attempts=0
@@ -247,7 +299,7 @@ switch (cmd) {
 
   default:
     console.error(`unknown command: ${cmd}`);
-    console.error('try: doctor | status | day <date> | reopen <date> | replay | pending [n] | manifest [out] | vacuum');
+    console.error('try: doctor | status | day <date> | reopen <date> | queue <date> | replay | pending [n] | manifest [out] | vacuum');
     process.exit(2);
 }
 
