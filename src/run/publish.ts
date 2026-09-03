@@ -37,6 +37,18 @@ export interface PublishStats {
   sent: number;
   rejected: number;
   ambiguous: number;
+  /**
+   * Slowest single POST this run, and how many rows were in it.
+   *
+   * This is the number BATCH_SIZE is tuned against. ZingHR validates and
+   * inserts the whole array before responding, so duration scales with batch
+   * size, and ZINGHR_HEADERS_TIMEOUT_MS is a cliff rather than a slope:
+   * crossing it converts a success into an ambiguous send -- the one outcome
+   * that can duplicate rows in payroll. Watching this creep toward the timeout
+   * is how you find out BEFORE that happens rather than after.
+   */
+  maxPostMs: number;
+  maxPostCount: number;
   /** Set when the run stopped early; days stay incomplete and retry tomorrow. */
   abortedReason?: string;
 }
@@ -87,14 +99,33 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
   const log = deps.log ?? (() => {});
   const sleep = deps.sleep ?? noSleep;
 
-  const stats: PublishStats = { batches: 0, calls: 0, sent: 0, rejected: 0, ambiguous: 0 };
+  const stats: PublishStats = {
+    batches: 0, calls: 0, sent: 0, rejected: 0, ambiguous: 0,
+    maxPostMs: 0, maxPostCount: 0,
+  };
 
   // One fresh token per POST. The 1200s TTL makes caching viable, but at this
   // volume it would save roughly one call a night and add expiry arithmetic.
+  //
+  // Auth is deliberately NOT included in the timing below: it is a fixed cost
+  // per POST, and folding it in would inflate the one number that BATCH_SIZE
+  // is chosen against.
+  let lastPostMs = 0;
   const sendOnce = async (swipes: ZingSwipe[]): Promise<SyncVerdict> => {
     stats.calls++;
     const token = await client.authenticate();
-    return client.postBatch(swipes, token);
+    const startedAt = Date.now();
+    try {
+      // `return await` is load-bearing: without it the finally block runs
+      // before the request settles and every measurement reads ~0ms.
+      return await client.postBatch(swipes, token);
+    } finally {
+      lastPostMs = Date.now() - startedAt;
+      if (lastPostMs > stats.maxPostMs) {
+        stats.maxPostMs = lastPostMs;
+        stats.maxPostCount = swipes.length;
+      }
+    }
   };
 
   // A deferral returns records to 'pending' so tomorrow can pick them up --
@@ -136,12 +167,14 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
             // nothing; four copies in payroll costs a conversation.
             repo.releaseAmbiguous(ids, c.detail, null);
             stats.ambiguous += ids.length;
-            log('publish.ambiguous.defer', { count: ids.length, detail: c.detail });
+            // ms is the diagnosis here: a duration at the headers timeout
+            // means the batch is too large, not that the network is unwell.
+            log('publish.ambiguous.defer', { count: ids.length, ms: lastPostMs, detail: c.detail });
             stop = `ambiguous: ${c.detail}`;
             settled = true;
             break;
           }
-          log('publish.ambiguous.retry', { count: ids.length, detail: c.detail });
+          log('publish.ambiguous.retry', { count: ids.length, ms: lastPostMs, detail: c.detail });
           await sleep(backoffMs(ambiguousAttempts, cfg.BACKOFF_BASE_MS, cfg.BACKOFF_CAP_MS));
           continue;
         }
@@ -162,6 +195,9 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
       if (verdict.kind === 'accepted') {
         repo.markSent(ids);
         stats.sent += ids.length;
+        // The only log on the healthy path. Without it a successful run is
+        // silent, and silence is also what a broken publisher looks like.
+        log('publish.batch.sent', { count: ids.length, ms: lastPostMs });
         settled = true;
         break;
       }

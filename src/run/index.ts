@@ -74,7 +74,10 @@ export async function runOnce(deps: RunDeps): Promise<RunSummary> {
     daysProcessed: [], fetched: 0, sweptRows: 0, newlyStaged: 0,
     unmappable: 0, unmappableSamples: [],
     sweptDays: 0, reopened: [],
-    publish: { batches: 0, calls: 0, sent: 0, rejected: 0, ambiguous: 0 },
+    publish: {
+      batches: 0, calls: 0, sent: 0, rejected: 0, ambiguous: 0,
+      maxPostMs: 0, maxPostCount: 0,
+    },
     stalled: [], pruned: 0,
   };
 

@@ -235,3 +235,67 @@ describe('bisection fallback delivers the innocent', () => {
     assert.equal(new Set(state.tokensUsed).size, state.posts, 'no reuse under bisection either');
   });
 });
+
+describe('POST latency instrumentation', () => {
+  test('every delivered batch emits publish.batch.sent with its size and duration', async () => {
+    stage(25);
+    const { client } = fakeClient(async () => ({ kind: 'accepted' }));
+    const events: Array<{ event: string; detail: Record<string, unknown> }> = [];
+    const stats = await publish({
+      ...deps(client),
+      log: (event, detail) => events.push({ event, detail }),
+    });
+
+    // BATCH_SIZE is 10, so 25 swipes drain as 10 / 10 / 5.
+    const sent = events.filter((e) => e.event === 'publish.batch.sent');
+    assert.equal(sent.length, 3, 'the healthy path must not be silent');
+    assert.deepEqual(sent.map((e) => e.detail.count), [10, 10, 5]);
+    for (const e of sent) {
+      assert.equal(typeof e.detail.ms, 'number', 'duration must be reported');
+      assert.ok((e.detail.ms as number) >= 0);
+    }
+    assert.equal(stats.sent, 25);
+  });
+
+  test('the slowest POST is tracked with the row count that produced it', async () => {
+    stage(25);
+    // Make the SECOND batch the slow one, so we can prove it is a maximum
+    // rather than simply the first or last value seen.
+    let post = 0;
+    const client: Publisher = {
+      authenticate: async () => 'tok',
+      postBatch: async () => {
+        post++;
+        if (post === 2) await new Promise((r) => setTimeout(r, 25));
+        return { kind: 'accepted' };
+      },
+    };
+    const stats = await publish(deps(client));
+
+    assert.ok(stats.maxPostMs >= 20, `expected the slow batch to dominate, got ${stats.maxPostMs}ms`);
+    assert.equal(stats.maxPostCount, 10, 'the size of the slow batch, not of the last one');
+  });
+
+  test('timing survives a throw, so a timeout reports how long it waited', async () => {
+    stage(5);
+    const client: Publisher = {
+      authenticate: async () => 'tok',
+      postBatch: async () => {
+        await new Promise((r) => setTimeout(r, 25));
+        throw netErr('UND_ERR_HEADERS_TIMEOUT');
+      },
+    };
+    const events: Array<{ event: string; detail: Record<string, unknown> }> = [];
+    const stats = await publish({
+      ...deps(client),
+      log: (event, detail) => events.push({ event, detail }),
+    });
+
+    // The whole point: a headers timeout is ambiguous, and its duration is
+    // what distinguishes "batch too big" from "network unwell".
+    const defer = events.find((e) => e.event === 'publish.ambiguous.defer');
+    assert.ok(defer, 'an ambiguous defer must be logged');
+    assert.ok((defer!.detail.ms as number) >= 20, 'elapsed time must be captured on the throw path');
+    assert.ok(stats.maxPostMs >= 20, 'a failed POST still counts toward the slowest');
+  });
+});

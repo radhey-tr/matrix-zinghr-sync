@@ -111,6 +111,15 @@ export function formatReport(summary: RunSummary, repo: Repo, cfg: Config, alert
   L.push(`  ${pad('ambiguous (may duplicate)', 28)}${summary.publish.ambiguous}`);
   L.push(`  ${pad('still pending', 28)}${repo.pendingCount()}`);
   L.push(`  ${pad('POSTs / batches', 28)}${summary.publish.calls} / ${summary.publish.batches}`);
+  if (summary.publish.calls > 0) {
+    // Trend this against ZINGHR_HEADERS_TIMEOUT_MS. Approaching it means
+    // BATCH_SIZE is too large: a timeout here is an ambiguous send, which is
+    // the only failure mode that can put a swipe into payroll twice.
+    L.push(
+      `  ${pad('slowest POST', 28)}${(summary.publish.maxPostMs / 1000).toFixed(1)}s` +
+      `  (${summary.publish.maxPostCount} rows)`,
+    );
+  }
   if (summary.publish.abortedReason) L.push(`  aborted: ${summary.publish.abortedReason}`);
   L.push('');
 
