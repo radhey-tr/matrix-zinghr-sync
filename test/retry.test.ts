@@ -4,7 +4,6 @@ import {
   backoffMs,
   classifyHttpStatus,
   classifyNetworkError,
-  withRetry,
 } from '../src/retry.ts';
 
 const err = (code: string) => Object.assign(new Error(code), { code });
@@ -70,59 +69,5 @@ describe('backoff', () => {
       assert.ok(hi <= 60_000, `attempt ${attempt} exceeded cap: ${hi}`);
       assert.ok(hi <= 1000 * 2 ** attempt, `attempt ${attempt} exceeded ceiling`);
     }
-  });
-});
-
-describe('retry ladders', () => {
-  const opts = {
-    maxAttempts: 4,
-    baseMs: 1,
-    capMs: 1,
-    maxAmbiguousAttempts: 1,
-    sleep: async () => {},
-  };
-
-  test('transient failures use the full ladder', async () => {
-    let calls = 0;
-    const res = await withRetry(
-      async () => {
-        calls++;
-        throw err('ECONNREFUSED');
-      },
-      (e) => classifyNetworkError(e),
-      opts,
-    );
-    assert.equal(res.ok, false);
-    assert.equal(calls, 4, 'connect-phase should exhaust maxAttempts');
-  });
-
-  test('ambiguous failures stop far sooner — each retry can create a duplicate', async () => {
-    let calls = 0;
-    const res = await withRetry(
-      async () => {
-        calls++;
-        throw err('UND_ERR_HEADERS_TIMEOUT');
-      },
-      (e) => classifyNetworkError(e),
-      opts,
-    );
-    assert.equal(res.ok, false);
-    assert.equal(calls, 2, 'one send plus one retry, then defer to the next run');
-    assert.equal(res.ok === false && res.classification.kind, 'ambiguous');
-  });
-
-  test('a recovered call reports how many attempts were ambiguous', async () => {
-    let calls = 0;
-    const res = await withRetry(
-      async () => {
-        if (++calls === 1) throw err('ECONNRESET');
-        return 'ok';
-      },
-      (e) => classifyNetworkError(e),
-      opts,
-    );
-    assert.equal(res.ok, true);
-    assert.equal(res.ok && res.value, 'ok');
-    assert.equal(res.ambiguousAttempts, 1, 'possible duplicate must be visible to the caller');
   });
 });

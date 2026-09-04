@@ -24,7 +24,7 @@ or data loss if skipped.
 - [ ] Record the App Registration's **validity period end date** somewhere a
       human will see it. When it lapses the integration stops with an auth
       error and no other warning.
-- [ ] `ALERT_WEBHOOK_URL` / `REPORT_EMAIL_TO` pointed somewhere people read.
+- [ ] `ALERT_WEBHOOK_URL` pointed at a channel people read.
 - [ ] `ENVIRONMENT=production`.
 - [ ] Confirm outbound access to both COSEC and `mservices.zinghr.com`,
       including any authenticating proxy.

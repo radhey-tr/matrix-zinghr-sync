@@ -136,7 +136,6 @@ const ConfigSchema = z.object({
   RETENTION_DAYS: int(180),
   RUN_LOG_RETENTION_DAYS: int(365),
   HEARTBEAT_URL: z.string().url().optional(),
-  REPORT_EMAIL_TO: z.string().optional(),
   ALERT_WEBHOOK_URL: z.string().url().optional(),
   DRY_RUN: z
     .enum(['true', 'false'])

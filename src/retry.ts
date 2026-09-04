@@ -166,73 +166,13 @@ export function backoffMs(attempt: number, baseMs: number, capMs: number, rng = 
   return Math.floor(rng() * ceiling);
 }
 
-export interface AttemptOptions {
-  maxAttempts: number;
-  baseMs: number;
-  capMs: number;
-  /** Ambiguous failures get their own, much shorter ladder — see §7. */
-  maxAmbiguousAttempts: number;
-  sleep?: (ms: number) => Promise<void>;
-  onRetry?: (attempt: number, c: Classification, delayMs: number) => void;
-}
-
-export interface AttemptFailure {
-  ok: false;
-  classification: Classification;
-  attempts: number;
-  ambiguousAttempts: number;
-}
-
-export type AttemptResult<T> = { ok: true; value: T; ambiguousAttempts: number } | AttemptFailure;
-
-const defaultSleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
-
-/**
- * Run an operation under the retry policy.
+/*
+ * NOTE: the retry LADDER itself lives in src/run/publish.ts, not here.
  *
- * The ambiguous ladder is deliberately shorter than the transient one. If
- * ZingHR is degraded rather than down, an ambiguous timeout is likely to be
- * followed by another — running a full backoff ladder can produce four copies
- * of the same swipe while believing none were sent.
+ * It is deliberately inline there: every exhausted ladder ends in a specific
+ * ledger write (releaseAmbiguous vs releaseUnblamed) and a decision about
+ * whether the run continues. Splitting the policy from its consequence put the
+ * same rules in two files that could drift, with only the unused copy tested --
+ * so the generic runner that used to sit here was removed. This module now
+ * classifies failures; publish.ts decides what to do about them.
  */
-export async function withRetry<T>(
-  op: () => Promise<T>,
-  classify: (err: unknown) => Classification,
-  opts: AttemptOptions,
-): Promise<AttemptResult<T>> {
-  const sleep = opts.sleep ?? defaultSleep;
-  let attempts = 0;
-  let ambiguousAttempts = 0;
-  let last: Classification = {
-    kind: 'transient',
-    scope: 'batch',
-    retryable: false,
-    blamesRecord: false,
-    detail: 'no attempt made',
-  };
-
-  for (;;) {
-    attempts++;
-    try {
-      return { ok: true, value: await op(), ambiguousAttempts };
-    } catch (err) {
-      last = classify(err);
-      if (last.kind === 'ambiguous') ambiguousAttempts++;
-
-      if (!last.retryable) break;
-
-      const exhausted =
-        last.kind === 'ambiguous'
-          ? ambiguousAttempts > opts.maxAmbiguousAttempts
-          : attempts >= opts.maxAttempts;
-      if (exhausted) break;
-
-      const delay =
-        last.retryAfterMs ?? backoffMs(attempts - 1, opts.baseMs, opts.capMs);
-      opts.onRetry?.(attempts, last, delay);
-      await sleep(delay);
-    }
-  }
-
-  return { ok: false, classification: last, attempts, ambiguousAttempts };
-}

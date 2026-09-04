@@ -105,6 +105,38 @@ describe('an outage must not blame the payload', () => {
     }
   });
 
+  test('connect-phase failures use the FULL ladder before deferring', async () => {
+    stage(3);
+    const { client, state } = fakeClient(async () => {
+      throw netErr('ECONNREFUSED');
+    });
+    await publish(deps(client));
+
+    // MAX_ATTEMPTS is 3 here. A request that provably never landed is safe to
+    // retry all the way -- this is the ladder the ambiguous path must NOT use.
+    assert.equal(state.posts, 3, 'a provably-unapplied failure retries fully');
+  });
+
+  test('a 5xx is transient, not ambiguous — the server said it did not apply', async () => {
+    stage(3);
+    const { client, state } = fakeClient(async () => {
+      throw Object.assign(new Error('HTTP 503'), { code: 'ZING_SERVER_ERROR', statusCode: 503 });
+    });
+    const stats = await publish(deps(client));
+
+    assert.equal(state.posts, 3, 'full ladder, like any provably-unapplied failure');
+    assert.equal(stats.ambiguous, 0, 'a 5xx must never count as a possible duplicate');
+
+    const rows = db.prepare('SELECT attempts, ambiguous_count FROM swipe_event').all() as Array<{
+      attempts: number;
+      ambiguous_count: number;
+    }>;
+    for (const r of rows) {
+      assert.equal(r.ambiguous_count, 0, 'the server answered; nothing is in doubt');
+      assert.equal(r.attempts, 0, 'an outage is not the record’s fault');
+    }
+  });
+
   test('an auth failure aborts the run and leaves everything recoverable', async () => {
     stage(30);
     let posts = 0;
