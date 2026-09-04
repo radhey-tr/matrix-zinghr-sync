@@ -227,6 +227,12 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
             accepted: false,
             // Structural rejection: the identical payload will be refused
             // identically, so nightly retries would be pure noise.
+            //
+            // This flag is the lever. `permanent: true` abandons on the first
+            // rejection and skips quarantine entirely; it is correct only
+            // because every documented ZingHR Code 0 is structural. If a
+            // non-structural rejection is ever observed, set this to false and
+            // the graduated quarantine ladder in repo.applyOutcomes takes over.
             permanent: true,
             message: verdict.messages.join('; '),
           })),
@@ -282,7 +288,8 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
         swipeEventId: r.item.id,
         accepted: false,
         // Structural rejections are permanent: the identical payload will be
-        // refused identically, so retrying it nightly is pure noise.
+        // refused identically, so retrying it nightly is pure noise. As above,
+        // this is the lever that would re-enable the quarantine ladder.
         permanent: true,
         message: r.messages.join('; '),
       }));

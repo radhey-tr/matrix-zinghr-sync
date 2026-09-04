@@ -230,6 +230,13 @@ export class Repo {
   /**
    * A rejection naming this specific record. This is the only path that
    * advances `attempts`, and therefore the only path toward abandonment.
+   *
+   * NOTE ON THE TWO REJECTION BRANCHES: as of 2026-09, every caller passes
+   * `permanent: true`, so only the `abandon` statement below ever runs. A
+   * rejected swipe is abandoned on its FIRST rejection -- it is never
+   * quarantined, `maxAttempts` is never consulted here, and `retryDelayMs`
+   * is never applied. Both parameters are kept because the quarantine branch
+   * is correct and is the intended escape hatch; see the branch comment.
    */
   applyOutcomes(outcomes: RecordOutcome[], maxAttempts: number, retryDelayMs: number): void {
     const accept = this.db.prepare(
@@ -258,13 +265,34 @@ export class Repo {
           // Same payload will be rejected identically; no point retrying.
           abandon.run(o.message ?? 'permanent rejection', o.swipeEventId);
         } else {
+          // CURRENTLY UNREACHABLE: no caller passes `permanent: false`.
+          //
+          // This is the graduated path -- quarantine, wait `retryDelayMs`,
+          // retry, and only abandon once `attempts` hits `maxAttempts`. It is
+          // deliberately kept working: if ZingHR ever rejects for a reason that
+          // is NOT structural (a server-side lock, a validation depending on
+          // state that arrives later), flipping one call site in publish.ts to
+          // `permanent: false` activates all of it. Do not delete it to tidy
+          // up -- `quarantined` is in the swipe_event CHECK constraint, so
+          // removing the state costs a full table-rebuild migration.
           quarantine.run(maxAttempts, now + retryDelayMs, o.message ?? 'rejected', o.swipeEventId);
         }
       }
     })();
   }
 
-  /** Quarantined records become eligible again — the new-joiner case. */
+  /**
+   * Quarantined records become eligible again.
+   *
+   * CURRENTLY A NO-OP, and the case it was built for has been disproved.
+   * The intent was the new-joiner scenario: a swipe rejected because the
+   * employee did not exist in ZingHR yet, which would succeed once HR
+   * onboarded them. UAT settled that on 2026-08-26 -- unknown employee codes
+   * return `code: 1` (see docs/API-NOTES.md), because ZingHR performs no
+   * existence check on empIdentification. So a new joiner never produces a
+   * rejection, nothing ever reaches 'quarantined', and this returns 0 every
+   * night. Kept live alongside the quarantine branch in applyOutcomes.
+   */
   requeueQuarantined(): number {
     return this.db
       .prepare(
