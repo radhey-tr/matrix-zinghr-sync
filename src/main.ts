@@ -21,6 +21,7 @@ import { Repo } from './db/repo.ts';
 import { CosecClient } from './cosec.ts';
 import { ZingHrClient } from './zinghr.ts';
 import { runOnce, runTail } from './run/index.ts';
+import { makeSerialiser } from './run/serialise.ts';
 import { acquireLock, LockHeldError } from './run/lock.ts';
 import { buildAlerts, deliver, formatReport, heartbeat } from './report.ts';
 import type { RunMode } from './types.ts';
@@ -91,31 +92,14 @@ async function tick(mode: RunMode): Promise<void> {
   }
 }
 
-/**
- * In-process serialisation of the two schedules.
- *
- * A tail tick that finds a run in progress simply skips: the next one is
- * fifteen minutes away and re-reads the same day. The nightly must not skip --
- * it would be lost until tomorrow -- so it waits instead. The file lock still
- * guards against a second process.
- */
-let inProgress: Promise<void> | null = null;
-
-async function serialised(mode: RunMode): Promise<void> {
-  if (inProgress) {
-    if (mode === 'tail') {
-      // Expected under load: at production volume a late-day fetch can take
-      // ~10s, and a slow COSEC or a long drain can outlast the 2-minute
-      // interval. The next tick re-reads the same day, so skipping is free.
-      logger.debug({ mode }, 'run.busy');
-      return;
-    }
-    logger.info({ mode }, 'run.waiting');
-    await inProgress;
-  }
-  inProgress = tick(mode).finally(() => { inProgress = null; });
-  return inProgress;
-}
+// Serialises the two schedules in-process; rules and rationale in
+// run/serialise.ts. A busy tail is logged at debug because it is expected
+// under load: at production volume a late-day fetch can take ~10s, and a slow
+// COSEC or a long drain can outlast the 2-minute interval.
+const serialised = makeSerialiser(tick, {
+  onBusy: (mode) => logger.debug({ mode }, 'run.busy'),
+  onWaiting: (mode) => logger.info({ mode }, 'run.waiting'),
+});
 
 const tailOnly = process.argv.includes('--tail');
 const once = process.argv.includes('--once') || tailOnly;
