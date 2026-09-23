@@ -24,6 +24,29 @@ Observed API behaviour: [`docs/API-NOTES.md`](docs/API-NOTES.md)
     npm run run:tail            # one tail run
     npm start                   # resident process, runs on SCHEDULE and TAIL_SCHEDULE
 
+## Running it locally
+
+Development runs read `.env.local` and the TypeScript sources directly, so
+there is no build step and nothing touches `.env` or `dist/`:
+
+    npm run dev:start           # resident, both schedules -- the service
+    npm run dev:once            # one nightly run, then exit
+    npm run dev:tail            # one tail run, then exit
+    npm run dev:cli status      # ledger at a glance
+
+`dev:start` is the one that behaves like production: it holds both cron jobs,
+serialises them, and logs `scheduler.next` for each. The other three run
+immediately and exit, ignoring both schedules.
+
+**A dev run delivers for real unless you stop it.** `.env.local` points at UAT
+ZingHR with `DRY_RUN=false`, so prefix anything exploratory:
+
+    DRY_RUN=true LOG_LEVEL=info npm run dev:tail
+
+`LOG_LEVEL` is `warn` in `.env.local`, which hides the healthy path entirely --
+raise it to `info` to see `tail.fetched` and its `ms`.
+
+
 Configuration is read from `.env` by Node's own `--env-file`, so there is no
 dotenv dependency and the service needs no wrapper script to set variables.
 

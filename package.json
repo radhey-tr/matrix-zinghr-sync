@@ -18,6 +18,7 @@
     "status": "node --env-file=.env dist/cli.js status",
     "dev:once": "node --experimental-strip-types --env-file=.env.local src/main.ts --once",
     "dev:tail": "node --experimental-strip-types --env-file=.env.local src/main.ts --once --tail",
+    "dev:start": "node --experimental-strip-types --env-file=.env.local src/main.ts",
     "dev:cli": "node --experimental-strip-types --env-file=.env.local src/cli.ts"
   },
   "dependencies": {
