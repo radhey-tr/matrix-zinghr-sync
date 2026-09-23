@@ -66,7 +66,8 @@ async function tick(mode: RunMode): Promise<void> {
     logger[summary.outcome === 'ok' ? 'info' : 'warn'](
       {
         mode, outcome: summary.outcome, fetched: summary.fetched,
-        newlyStaged: summary.newlyStaged, sent: summary.publish.sent, alerts: alerts.length,
+        newlyStaged: summary.newlyStaged, sent: summary.publish.sent,
+        alerts: alerts.length, ms: summary.durationMs,
       },
       'run.finished',
     );

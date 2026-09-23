@@ -195,6 +195,27 @@ describe('the tail run makes today reach ZingHR within minutes', () => {
     assert.equal(dayState(TODAY), 'complete');
   });
 
+  test('every tick reports its fetch cost, including ticks that find nothing', async () => {
+    // TAIL_SCHEDULE is chosen against this number, so it cannot be logged
+    // only on the ticks that happen to stage something -- the expensive
+    // late-day fetches are frequently the ones with no new rows at all.
+    const events: Array<{ event: string; detail: Record<string, unknown> }> = [];
+    const spyLog = (event: string, detail: Record<string, unknown>) => events.push({ event, detail });
+
+    const rows = [row('1', '08/26/2026')];
+    await runTail({ ...deps(() => rows), log: spyLog });
+    events.length = 0;
+
+    const second = await runTail({ ...deps(() => rows), log: spyLog });
+    assert.equal(second.newlyStaged, 0, 'nothing new on this tick');
+
+    const fetched = events.find((e) => e.event === 'tail.fetched');
+    assert.ok(fetched, 'the fetch must be logged anyway');
+    assert.equal(fetched.detail.read, 1);
+    assert.equal(fetched.detail.newlyStaged, 0);
+    assert.equal(typeof fetched.detail.ms, 'number', 'with a duration to trend');
+  });
+
   test('dry run stages today and never contacts ZingHR', async () => {
     let called = false;
     const spy: Publisher = {

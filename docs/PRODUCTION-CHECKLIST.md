@@ -19,11 +19,22 @@ or data loss if skipped.
 
 - [ ] **BLOCKING — measure one tail fetch against production COSEC before
       enabling the 2-minute cadence.** Run `npm run run:tail` with
-      `DRY_RUN=true` late in a working day and note the fetch duration in the
-      log. At 2-minute ticks COSEC runs that report query ~720 times a day;
-      UAT took ~2.5 s for 3,906 rows, but production is ~5× the volume on a
-      box that also runs door control. If a late-day fetch approaches ~30 s,
-      raise `TAIL_SCHEDULE` to `*/5` rather than pushing it.
+      `DRY_RUN=true` **and a throwaway `DB_PATH`** late in a working day —
+      the last ticks of the day re-read the most rows, so that is the worst
+      case and the only one worth measuring. Read `ms` from the
+      `tail.fetched` log line.
+
+      At 2-minute ticks COSEC runs that report query ~720 times a day; UAT
+      took ~2.5 s for 3,906 rows, but production is ~5× the volume on a box
+      that also runs door control. Divide the measured `ms` by the interval
+      to get the share of the day COSEC spends serving this integration:
+      10 s of a 120 s tick is 8%, 30 s is 25%. Past roughly 30 s, move
+      `TAIL_SCHEDULE` to `*/5` — the same fetch is then 10%, and one extra
+      interval costs the client ~90 seconds of freshness they cannot
+      perceive.
+
+      The throwaway `DB_PATH` matters: a dry run still stages what it reads,
+      and those rows stay `pending` for the first live run to deliver.
 - [ ] **Ask ZingHR whether the sync endpoint is rate-limited.** The tail makes
       up to ~720 token + POST pairs a day instead of ~20. Nothing observed on
       UAT suggests a limit, but nobody has asked.

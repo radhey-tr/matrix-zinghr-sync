@@ -39,6 +39,12 @@ export interface RunSummary {
   daysProcessed: string[];
   /** Rows returned by the per-day fetches. */
   fetched: number;
+  /**
+   * How long the tail's single fetch took. The tail re-reads all of today on
+   * every tick, so this grows through the day and is what TAIL_SCHEDULE must
+   * be sized against. Zero for the nightly, which fetches many days.
+   */
+  fetchMs: number;
   /** Rows returned by the overlapping re-read sweep. Mostly already known. */
   sweptRows: number;
   /**
@@ -70,7 +76,7 @@ function emptySummary(mode: RunMode): RunSummary {
   return {
     correlationId: randomUUID().slice(0, 8), mode, outcome: 'ok',
     startedAt: Date.now(), durationMs: 0,
-    daysProcessed: [], fetched: 0, sweptRows: 0, newlyStaged: 0,
+    daysProcessed: [], fetched: 0, fetchMs: 0, sweptRows: 0, newlyStaged: 0,
     unmappable: 0, unmappableSamples: [],
     sweptDays: 0, reopened: [],
     publish: {
@@ -124,14 +130,22 @@ export async function runTail(deps: RunDeps): Promise<RunSummary> {
     repo.ensureDay(today);
 
     try {
+      // Timed, and logged on EVERY tick rather than only when rows are new.
+      // COSEC cannot filter by received-time, so each tick re-reads the whole
+      // day and this duration grows with it -- it is the number TAIL_SCHEDULE
+      // has to be chosen against, the same way maxPostMs governs BATCH_SIZE.
+      // If it approaches the tick interval, ticks start skipping and the
+      // configured interval quietly stops being the real one.
+      const startedFetch = Date.now();
       const rows = await cosec.fetchRange(today, today);
+      summary.fetchMs = Date.now() - startedFetch;
       summary.fetched = rows.length;
       const staged = mapRows(rows, shape, summary, new Set());
       summary.newlyStaged = repo.stageSwipes(staged);
       summary.daysProcessed.push(today);
-      if (summary.newlyStaged) {
-        log('tail.staged', { date: today, read: rows.length, newlyStaged: summary.newlyStaged });
-      }
+      log('tail.fetched', {
+        date: today, read: rows.length, newlyStaged: summary.newlyStaged, ms: summary.fetchMs,
+      });
     } catch (err) {
       // The next tick is two minutes away and re-reads the same day, so a
       // transient COSEC failure costs nothing. Still publish, because
