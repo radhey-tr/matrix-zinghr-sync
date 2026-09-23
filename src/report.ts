@@ -183,7 +183,6 @@ export function formatReport(summary: RunSummary, repo: Repo, cfg: Config, alert
   if (summary.mode === 'nightly') {
     L.push('SWEEP');
     L.push(`  re-read ${summary.sweptDays} day(s) from COSEC; reopened ${summary.reopened.length}`);
-    L.push(`  (COSEC records ~23% of swipes >24h after the event, so this is load-bearing)`);
   }
 
   return L.join('\n');
