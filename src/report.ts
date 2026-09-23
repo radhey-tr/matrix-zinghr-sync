@@ -1,9 +1,15 @@
 /**
  * Daily report, alerts, and heartbeat.
  *
- * The report is sent whether or not anything went wrong. At one run a night,
- * silence is exactly what a dead job looks like, so a report that only appears
- * on failure is indistinguishable from a broken reporter.
+ * The nightly report is sent whether or not anything went wrong. At one run a
+ * night, silence is exactly what a dead job looks like, so a report that only
+ * appears on failure is indistinguishable from a broken reporter.
+ *
+ * Tail runs are different: ~100 a day, and a report per tick would bury the
+ * nightly one. A tail run carries only alerts about ITSELF (it failed, or
+ * ZingHR refused its credentials); everything ledger-wide -- abandoned
+ * swipes, stalled days, repeated ambiguity -- waits for the nightly, which is
+ * also where a human is expected to read it.
  */
 import { request } from 'undici';
 import type { Config } from './config.ts';
@@ -16,11 +22,15 @@ export interface Alert {
   detail: string;
 }
 
-export function buildAlerts(summary: RunSummary, repo: Repo, cfg: Config): Alert[] {
+export function buildAlerts(summary: RunSummary, repo: Repo, cfg: Config, now = Date.now()): Alert[] {
   const alerts: Alert[] = [];
 
   if (summary.outcome === 'failed') {
-    alerts.push({ severity: 'critical', title: 'Sync run failed', detail: summary.error ?? 'unknown' });
+    alerts.push({
+      severity: 'critical',
+      title: `Sync run failed (${summary.mode})`,
+      detail: summary.error ?? 'unknown',
+    });
   }
 
   if (summary.publish.abortedReason?.startsWith('auth')) {
@@ -34,6 +44,10 @@ export function buildAlerts(summary: RunSummary, repo: Repo, cfg: Config): Alert
         `validity period, rotated client secret, or this host's IP not allowlisted.`,
     });
   }
+
+  // Everything below is about the ledger rather than this run, and belongs
+  // to the nightly report. See the header comment.
+  if (summary.mode === 'tail') return alerts;
 
   if (summary.stalled.length) {
     alerts.push({
@@ -74,14 +88,31 @@ export function buildAlerts(summary: RunSummary, repo: Repo, cfg: Config): Alert
     });
   }
 
-  const last = repo.lastSuccessfulRunAt();
-  const staleHours = last ? (Date.now() - last) / 3_600_000 : Infinity;
+  const lastNightly = repo.lastSuccessfulRunAt('nightly');
+  const staleHours = lastNightly ? (now - lastNightly) / 3_600_000 : Infinity;
   if (staleHours > 24 + cfg.STALE_ALERT_GRACE_HOURS) {
     alerts.push({
       severity: 'critical',
-      title: 'No successful run in over 24 hours',
-      detail: last ? `Last success ${staleHours.toFixed(1)}h ago` : 'No successful run on record',
+      title: 'No successful nightly run in over 24 hours',
+      detail: lastNightly ? `Last success ${staleHours.toFixed(1)}h ago` : 'No successful nightly run on record',
     });
+  }
+
+  // The tail's own failures are visible only here: a tail tick that fails
+  // reports itself, but one that never runs at all reports nothing. This is
+  // the nightly noticing on its behalf; the heartbeat is the external check.
+  if (cfg.TAIL_SCHEDULE) {
+    const lastTail = repo.lastSuccessfulRunAt('tail');
+    const staleMin = lastTail ? (now - lastTail) / 60_000 : Infinity;
+    if (staleMin > cfg.TAIL_STALE_ALERT_MINUTES) {
+      alerts.push({
+        severity: 'critical',
+        title: `No successful tail run in over ${cfg.TAIL_STALE_ALERT_MINUTES} minutes`,
+        detail: lastTail
+          ? `Last success ${(staleMin / 60).toFixed(1)}h ago; intra-day swipes are not reaching ZingHR`
+          : 'No successful tail run on record',
+      });
+    }
   }
 
   return alerts;
@@ -92,7 +123,7 @@ export function formatReport(summary: RunSummary, repo: Repo, cfg: Config, alert
   const pad = (s: string, n: number) => s.padEnd(n);
 
   L.push(`Matrix COSEC -> ZingHR swipe sync  [${cfg.ENVIRONMENT}]${cfg.DRY_RUN ? '  (DRY RUN)' : ''}`);
-  L.push(`run ${summary.correlationId}  ${new Date(summary.startedAt).toISOString()}  ${(summary.durationMs / 1000).toFixed(1)}s  -> ${summary.outcome.toUpperCase()}`);
+  L.push(`${summary.mode} run ${summary.correlationId}  ${new Date(summary.startedAt).toISOString()}  ${(summary.durationMs / 1000).toFixed(1)}s  -> ${summary.outcome.toUpperCase()}`);
   L.push('');
 
   if (alerts.length) {
@@ -149,9 +180,11 @@ export function formatReport(summary: RunSummary, repo: Repo, cfg: Config, alert
     L.push('');
   }
 
-  L.push('SWEEP');
-  L.push(`  re-read ${summary.sweptDays} day(s) from COSEC; reopened ${summary.reopened.length}`);
-  L.push(`  (COSEC records ~23% of swipes >24h after the event, so this is load-bearing)`);
+  if (summary.mode === 'nightly') {
+    L.push('SWEEP');
+    L.push(`  re-read ${summary.sweptDays} day(s) from COSEC; reopened ${summary.reopened.length}`);
+    L.push(`  (COSEC records ~23% of swipes >24h after the event, so this is load-bearing)`);
+  }
 
   return L.join('\n');
 }
@@ -183,6 +216,10 @@ export async function deliver(
  * External dead-man's switch. Pinged only on success, so its ABSENCE is the
  * signal -- internal monitoring cannot report its own death, and a nightly job
  * can be dead for a fortnight before anyone notices.
+ *
+ * Pinged from both cadences. With the tail on, the switch's expected period is
+ * the tail interval plus grace (2 min + 5), not a day -- a stopped process
+ * then surfaces in minutes rather than the following morning.
  */
 export async function heartbeat(
   cfg: Config,

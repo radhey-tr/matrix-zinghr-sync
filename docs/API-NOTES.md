@@ -159,6 +159,36 @@ measured in this tenant's own data. The re-read sweep is mandatory, and
 Re-reading is cheap (LAN-ish, ~2.5s for 3,906 rows) and sends nothing new,
 because `indexno` dedupes at the database level.
 
+### The prompt majority arrives in seconds (measured 2026-09-22)
+
+Over 6,824 rows (July + August), the distribution is sharply bimodal rather
+than a smooth tail:
+
+| lag | share |
+|---|---|
+| under 10 s | 51.2% |
+| 10 s to 1 h | 3.4% |
+| 1 to 24 h | 7.3% |
+| over 24 h | 37.1% |
+
+p90 of the prompt group is **5 seconds**. This is what makes a short polling
+interval worth anything: for an online reader, COSEC has the swipe almost
+immediately, so the sync interval IS the end-to-end latency.
+
+The split is per controller, not random. Most controllers record 90-100% of
+their swipes within a minute; a handful (2031, 785, 1561, 2116 and others)
+record 0% that fast, and their events land in single bulk loads — controller
+2031's 853 swipes were all recorded on 2026-08-07, 790 of them for July
+dates.
+
+**Those bulk loads are a commissioning artifact**, not steady-state
+behaviour, so the >24h share here overstates what production will do. Treat
+every lag figure in this document as a CEILING measured during setup. It
+follows that `SWEEP_DAYS` and `RETENTION_DAYS`, which are sized against these
+numbers, are conservative by construction — which is the right direction to
+be wrong in, and the reason not to tune either down until production data
+exists. See the re-measure item in the production checklist.
+
 ## Open
 
 - ~~Which field is ZingHR's employee code?~~ **CONFIRMED 2026-08-27: `userid`.**

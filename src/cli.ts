@@ -104,9 +104,11 @@ switch (cmd) {
     break;
 
   case 'status': {
-    const last = repo.lastSuccessfulRunAt();
+    const ago = (t: number | null) =>
+      t ? new Date(t).toISOString() + `  (${((Date.now() - t) / 3600000).toFixed(1)}h ago)` : 'never';
     console.log(`environment      ${cfg.ENVIRONMENT}${cfg.DRY_RUN ? '  (DRY RUN)' : ''}`);
-    console.log(`last success     ${last ? new Date(last).toISOString() + `  (${((Date.now() - last) / 3600000).toFixed(1)}h ago)` : 'never'}`);
+    console.log(`last nightly ok  ${ago(repo.lastSuccessfulRunAt('nightly'))}`);
+    console.log(`last tail ok     ${cfg.TAIL_SCHEDULE ? ago(repo.lastSuccessfulRunAt('tail')) : 'tail disabled'}`);
     console.log(`pending swipes   ${repo.pendingCount()}`);
     const stalled = repo.stalledDays();
     console.log(`stalled days     ${stalled.length ? stalled.map((d) => d.attendance_date).join(', ') : 'none'}`);
@@ -174,7 +176,11 @@ switch (cmd) {
     console.log(`${date} queued — it will be fetched on the next run.`);
 
     if (date === today) {
-      console.log('Today is still in progress; the sweep picks up later swipes tomorrow.');
+      console.log(
+        cfg.TAIL_SCHEDULE
+          ? 'Today is fetched by every tail run anyway; queueing it changes nothing.'
+          : 'Today is still in progress; the sweep picks up later swipes tomorrow.',
+      );
     }
 
     // Days are processed oldest-first, so a backlog can starve the date the

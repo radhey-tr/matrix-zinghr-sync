@@ -11,11 +11,13 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "node --experimental-strip-types --test --test-timeout=15000 test/*.test.ts",
     "run:once": "node --env-file=.env dist/main.js --once",
+    "run:tail": "node --env-file=.env dist/main.js --once --tail",
     "start": "node --env-file=.env dist/main.js",
     "cli": "node --env-file=.env dist/cli.js",
     "doctor": "node --env-file=.env dist/cli.js doctor",
     "status": "node --env-file=.env dist/cli.js status",
     "dev:once": "node --experimental-strip-types --env-file=.env.local src/main.ts --once",
+    "dev:tail": "node --experimental-strip-types --env-file=.env.local src/main.ts --once --tail",
     "dev:cli": "node --experimental-strip-types --env-file=.env.local src/cli.ts"
   },
   "dependencies": {

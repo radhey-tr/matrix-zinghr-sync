@@ -79,7 +79,24 @@ const ConfigSchema = z.object({
   ZINGHR_BODY_TIMEOUT_MS: int(30_000),
 
   // ---- Scheduling --------------------------------------------------------
+  /** The nightly run: stage yesterday, sweep, publish, settle, prune, report. */
   SCHEDULE: z.string().default('30 0 * * *'),
+  /**
+   * The tail: fetch TODAY, stage, publish. Nothing else -- no sweep, no
+   * settle, no prune, no report. This is what makes intra-day swipes reach
+   * ZingHR within about a minute rather than the next morning. Blank
+   * disables it.
+   *
+   * Two minutes rather than one: COSEC records an online swipe within ~2-5s
+   * (p90, measured), so polling latency IS the delay and the average wait is
+   * half the interval -- 60s here. Halving it again would save 30s nobody
+   * perceives while doubling the load on COSEC, which is the constrained
+   * side: the API filters by date only, so every tick re-downloads all of
+   * today (~4 MB / ~20k rows by evening at production volume) and each one
+   * is a report query against the attendance server. The ledger dedupes, so
+   * re-reading sends nothing twice.
+   */
+  TAIL_SCHEDULE: z.string().default('*/2 * * * *'),
   TIMEZONE: z.string().default('Asia/Kolkata'),
   /**
    * Days re-READ from COSEC each run. Sends only rows not already staged.
@@ -112,13 +129,29 @@ const ConfigSchema = z.object({
 
   // ---- Retry -------------------------------------------------------------
   MAX_ATTEMPTS: int(5),
-  /** Ambiguous sends retry once per run, then defer to tomorrow. */
+  /** Ambiguous sends retry once per run, then are held -- see below. */
   AMBIGUOUS_RETRIES: int(1),
+  /**
+   * How long a batch whose outcome is unknown waits before the next attempt:
+   * AMBIGUOUS_HOLD_MS * 2^ambiguous_count, capped. With a run every 2 minutes
+   * "defer to the next run" would mean re-sending a possibly-delivered batch
+   * ~1400 times a day, and ZingHR has no read-back to reconcile against. The
+   * defaults give 1h, 2h, 4h, 8h, 16h, 24h -- AMBIGUOUS_ALERT_AT=5 then fires
+   * after about a day of continuous ambiguity.
+   */
+  AMBIGUOUS_HOLD_MS: int(3_600_000),
+  AMBIGUOUS_HOLD_CAP_MS: int(86_400_000),
   AMBIGUOUS_ALERT_AT: int(5),
   QUARANTINE_DAYS: int(7),
   STALL_DAYS: int(3),
-  /** Grace on top of 24h before "no successful run" escalates. */
+  /** Grace on top of 24h before "no successful nightly run" escalates. */
   STALE_ALERT_GRACE_HOURS: int(2),
+  /**
+   * "No successful tail run" escalates after this long. Unused when the tail
+   * is off. Generous against the 2-minute interval on purpose: a handful of
+   * consecutive COSEC hiccups is not an incident, a stopped tail is.
+   */
+  TAIL_STALE_ALERT_MINUTES: int(10),
   BACKOFF_BASE_MS: int(1_000),
   BACKOFF_CAP_MS: int(60_000),
 

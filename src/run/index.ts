@@ -1,7 +1,8 @@
 /**
- * The nightly run.
+ * The two runs.
  *
- * Ordering matters and each step earns its place:
+ * The NIGHTLY run owns the day lifecycle. Ordering matters and each step earns
+ * its place:
  *
  *   reclaim  - a previous run died mid-batch; those rows are ambiguous, not lost
  *   requeue  - quarantined records get another chance (rarely fires in practice)
@@ -13,16 +14,25 @@
  *   reopen   - a settled day that the sweep found new work for
  *   publish  - drain to ZingHR, serially, one token per POST
  *   settle   - mark days complete, or stalled if they have been open too long
+ *
+ * The TAIL run (runTail, every TAIL_SCHEDULE) exists so that swipes reach
+ * ZingHR within minutes rather than the next morning. It fetches TODAY, stages
+ * it, and publishes. Nothing else: no sweep, no settle, no prune, no report.
+ * Today's day row is left `pending` and untouched so the nightly picks it up
+ * as "yesterday" exactly as it always has -- the tail is an accelerator in
+ * front of the nightly, not a replacement for any part of it.
  */
 import { randomUUID } from 'node:crypto';
 import type { Config } from '../config.ts';
 import type { Repo } from '../db/repo.ts';
+import type { RunMode } from '../types.ts';
 import { CosecClient, shapeFrom, toStageable, type CosecShape } from '../cosec.ts';
 import { publish, type Publisher, type PublishStats } from './publish.ts';
 import { addDays, daysBetween, todayIso } from './dates.ts';
 
 export interface RunSummary {
   correlationId: string;
+  mode: RunMode;
   outcome: 'ok' | 'partial' | 'failed';
   startedAt: number;
   durationMs: number;
@@ -56,21 +66,10 @@ export interface RunDeps {
   now?: () => Date;
 }
 
-export async function runOnce(deps: RunDeps): Promise<RunSummary> {
-  const { cfg, repo, cosec, zing } = deps;
-  const log = deps.log ?? (() => {});
-  const now = deps.now ?? (() => new Date());
-  const shape: CosecShape = shapeFrom(cfg);
-  // The sweep deliberately overlaps the day job, so the same malformed row is
-  // seen more than once per run. Count distinct rows, or the report inflates.
-  const seenBadRows = new Set<string>();
-
-  const correlationId = randomUUID().slice(0, 8);
-  const startedAt = Date.now();
-  const runId = repo.startRun(correlationId);
-
-  const summary: RunSummary = {
-    correlationId, outcome: 'ok', startedAt, durationMs: 0,
+function emptySummary(mode: RunMode): RunSummary {
+  return {
+    correlationId: randomUUID().slice(0, 8), mode, outcome: 'ok',
+    startedAt: Date.now(), durationMs: 0,
     daysProcessed: [], fetched: 0, sweptRows: 0, newlyStaged: 0,
     unmappable: 0, unmappableSamples: [],
     sweptDays: 0, reopened: [],
@@ -80,9 +79,97 @@ export async function runOnce(deps: RunDeps): Promise<RunSummary> {
     },
     stalled: [], pruned: 0,
   };
+}
+
+function finish(repo: Repo, runId: number, summary: RunSummary): RunSummary {
+  summary.durationMs = Date.now() - summary.startedAt;
+  repo.finishRun(
+    runId,
+    summary.outcome,
+    {
+      days: summary.daysProcessed.length,
+      fetched: summary.fetched,
+      sent: summary.publish.sent,
+      rejected: summary.publish.rejected,
+      ambiguous: summary.publish.ambiguous,
+    },
+    summary.error,
+  );
+  return summary;
+}
+
+/**
+ * The tail: today only, then publish. See the header comment.
+ *
+ * Deliberately does NOT call markDayStaged: that would flip today's row to
+ * `staged`, and the nightly stages only `pending` days -- today must still
+ * look untouched when it becomes yesterday. Re-reading is what makes this
+ * safe: every tick re-downloads all of today and the identity column dedupes,
+ * so only rows COSEC has recorded since the last tick are new.
+ */
+export async function runTail(deps: RunDeps): Promise<RunSummary> {
+  const { cfg, repo, cosec, zing } = deps;
+  const log = deps.log ?? (() => {});
+  const now = deps.now ?? (() => new Date());
+  const shape: CosecShape = shapeFrom(cfg);
+
+  const summary = emptySummary('tail');
+  const runId = repo.startRun(summary.correlationId, 'tail');
 
   try {
-    const reclaimed = repo.reclaimInFlight();
+    const reclaimed = repo.reclaimInFlight(cfg.AMBIGUOUS_HOLD_MS, cfg.AMBIGUOUS_HOLD_CAP_MS);
+    if (reclaimed) log('run.reclaimed', { count: reclaimed });
+
+    const today = todayIso(now(), cfg.TIMEZONE);
+    repo.ensureDay(today);
+
+    try {
+      const rows = await cosec.fetchRange(today, today);
+      summary.fetched = rows.length;
+      const staged = mapRows(rows, shape, summary, new Set());
+      summary.newlyStaged = repo.stageSwipes(staged);
+      summary.daysProcessed.push(today);
+      if (summary.newlyStaged) {
+        log('tail.staged', { date: today, read: rows.length, newlyStaged: summary.newlyStaged });
+      }
+    } catch (err) {
+      // The next tick is two minutes away and re-reads the same day, so a
+      // transient COSEC failure costs nothing. Still publish, because
+      // earlier ticks may have left work held for a retry.
+      const msg = err instanceof Error ? err.message : String(err);
+      summary.outcome = 'partial';
+      log('tail.fetch.failed', { date: today, error: msg });
+    }
+
+    if (!cfg.DRY_RUN) {
+      summary.publish = await publish({ repo, client: zing, cfg, log });
+      if (summary.publish.abortedReason) summary.outcome = 'partial';
+    } else {
+      log('run.dry_run', { pending: repo.pendingCount() });
+    }
+  } catch (err) {
+    summary.outcome = 'failed';
+    summary.error = err instanceof Error ? err.message : String(err);
+    log('tail.failed', { error: summary.error });
+  }
+
+  return finish(repo, runId, summary);
+}
+
+export async function runOnce(deps: RunDeps): Promise<RunSummary> {
+  const { cfg, repo, cosec, zing } = deps;
+  const log = deps.log ?? (() => {});
+  const now = deps.now ?? (() => new Date());
+  const shape: CosecShape = shapeFrom(cfg);
+  // The sweep deliberately overlaps the day job, so the same malformed row is
+  // seen more than once per run. Count distinct rows, or the report inflates.
+  const seenBadRows = new Set<string>();
+
+  const summary = emptySummary('nightly');
+  const runId = repo.startRun(summary.correlationId, 'nightly');
+
+  try {
+    const reclaimed = repo.reclaimInFlight(cfg.AMBIGUOUS_HOLD_MS, cfg.AMBIGUOUS_HOLD_CAP_MS);
     if (reclaimed) log('run.reclaimed', { count: reclaimed });
     const requeued = repo.requeueQuarantined();
     if (requeued) log('run.requeued', { count: requeued });
@@ -92,9 +179,12 @@ export async function runOnce(deps: RunDeps): Promise<RunSummary> {
     repo.ensureDay(yesterday);
 
     // ---- stage incomplete days, oldest first ------------------------------
+    // Today is excluded: the tail may already have created its row, and it
+    // belongs to tomorrow's nightly. Staging it now would mark it `staged`
+    // and it would never get its "yesterday" fetch.
     const pending = repo
       .incompleteDays(cfg.MAX_DAYS_PER_RUN)
-      .filter((d) => d.state === 'pending');
+      .filter((d) => d.state === 'pending' && d.attendance_date < today);
 
     for (const day of pending) {
       try {
@@ -166,9 +256,13 @@ export async function runOnce(deps: RunDeps): Promise<RunSummary> {
     // Must include days processed this run, not only days holding swipes: a
     // holiday or a closed site yields zero rows, and such a day would
     // otherwise never settle, sit incomplete forever, and eventually stall.
+    //
+    // Today is never settled. The tail is still filling it, and a day marked
+    // `complete` at 00:30 with swipes arriving all day is a lie the status
+    // command would repeat.
     const stallMs = cfg.STALL_DAYS * 86_400_000;
     const toSettle = new Set([...repo.daysWithWork(), ...summary.daysProcessed, ...summary.reopened]);
-    for (const d of [...toSettle].sort()) {
+    for (const d of [...toSettle].filter((d) => d < today).sort()) {
       if (repo.settleDay(d, stallMs) === 'stalled') summary.stalled.push(d);
     }
     if (summary.stalled.length) summary.outcome = 'partial';
@@ -185,20 +279,7 @@ export async function runOnce(deps: RunDeps): Promise<RunSummary> {
     log('run.failed', { error: summary.error });
   }
 
-  summary.durationMs = Date.now() - startedAt;
-  repo.finishRun(
-    runId,
-    summary.outcome,
-    {
-      days: summary.daysProcessed.length,
-      fetched: summary.fetched,
-      sent: summary.publish.sent,
-      rejected: summary.publish.rejected,
-      ambiguous: summary.publish.ambiguous,
-    },
-    summary.error,
-  );
-  return summary;
+  return finish(repo, runId, summary);
 }
 
 function mapRows(

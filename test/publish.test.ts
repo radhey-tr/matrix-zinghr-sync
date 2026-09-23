@@ -18,6 +18,8 @@ const cfg = {
   QUARANTINE_DAYS: 7,
   BACKOFF_BASE_MS: 1,
   BACKOFF_CAP_MS: 1,
+  AMBIGUOUS_HOLD_MS: 3_600_000,
+  AMBIGUOUS_HOLD_CAP_MS: 86_400_000,
 } as unknown as Config;
 
 const deps = (client: Publisher) => ({ repo, client, cfg, sleep: async () => {} });
@@ -174,6 +176,38 @@ describe('ambiguous sends are handled timidly', () => {
     for (const r of rows) {
       assert.equal(r.ambiguous_count, 1, 'the possible duplicate is visible for reporting');
       assert.equal(r.attempts, 0, 'and still does not count against the record');
+    }
+  });
+
+  test('a deferred batch is HELD, not handed to the next run', async () => {
+    // With a tail run every 2 minutes, "defer to the next run" would re-send
+    // a possibly-delivered batch ~1400 times a day. The hold must be real, and
+    // it must grow: 1h, then 2h, then 4h.
+    stage(2);
+    const { client } = fakeClient(async () => {
+      throw netErr('UND_ERR_HEADERS_TIMEOUT');
+    });
+
+    const before = Date.now();
+    await publish(deps(client));
+    const first = db.prepare('SELECT next_attempt_at FROM swipe_event').all() as Array<{ next_attempt_at: number }>;
+    for (const r of first) {
+      assert.ok(r.next_attempt_at >= before + 3_600_000 - 50, 'held for at least an hour');
+      assert.ok(r.next_attempt_at < before + 2 * 3_600_000, 'but not longer on a first ambiguity');
+    }
+
+    const again = await publish(deps(client));
+    assert.equal(again.calls, 0, 'a held batch is invisible to the next run');
+
+    // Simulate the hold elapsing, and the second ambiguity doubling it.
+    db.prepare('UPDATE swipe_event SET next_attempt_at = NULL').run();
+    await publish(deps(client));
+    const second = db.prepare('SELECT next_attempt_at, ambiguous_count FROM swipe_event').all() as Array<{
+      next_attempt_at: number; ambiguous_count: number;
+    }>;
+    for (const r of second) {
+      assert.equal(r.ambiguous_count, 2);
+      assert.ok(r.next_attempt_at >= Date.now() + 2 * 3_600_000 - 50, 'second hold is two hours');
     }
   });
 

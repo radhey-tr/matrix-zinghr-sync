@@ -116,6 +116,33 @@ describe('ambiguity is tracked apart from blame', () => {
       assert.equal(r.ambiguous_count, 1, 'the batch may have landed before the crash');
     }
   });
+
+  test('reclaimed rows are held like any other ambiguous send', () => {
+    // A process dying mid-POST on every 2-minute tick would otherwise re-send
+    // the same batch ~700 times a day. The hold grows with ambiguous_count.
+    repo.stageSwipes([swipe(), swipe({ uniqueId: '1213' })]);
+    const [row] = repo.claimBatch(10);
+    assert.ok(row);
+    db.prepare('UPDATE swipe_event SET ambiguous_count = 2 WHERE id = ?').run(row.id);
+
+    const before = Date.now();
+    assert.equal(repo.reclaimInFlight(3_600_000, 86_400_000), 2);
+    assert.equal(repo.claimBatch(10).length, 0, 'nothing is claimable while held');
+
+    const held = db
+      .prepare('SELECT id, next_attempt_at FROM swipe_event ORDER BY id')
+      .all() as Array<{ id: number; next_attempt_at: number }>;
+    const byId = Object.fromEntries(held.map((h) => [h.id, h.next_attempt_at]));
+    assert.ok(byId[row.id]! >= before + 4 * 3_600_000 - 50, 'count 2 -> 4h hold');
+    const other = held.find((h) => h.id !== row.id)!;
+    assert.ok(other.next_attempt_at >= before + 3_600_000 - 50, 'count 0 -> 1h hold');
+    assert.ok(other.next_attempt_at < before + 2 * 3_600_000);
+
+    // Reclaiming with no hold is still the no-op-hold it used to be.
+    db.prepare("UPDATE swipe_event SET state = 'in_flight'").run();
+    repo.reclaimInFlight();
+    assert.equal(repo.claimBatch(10).length, 2, 'a zero hold makes them claimable at once');
+  });
 });
 
 describe('day settlement', () => {

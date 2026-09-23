@@ -15,8 +15,11 @@
  *                 (`swipes[1].SwipeDateTime`), so those are quarantined and
  *                 the remainder re-sent. Bisection is the fallback for
  *                 batch-scoped complaints that name no index.
- *   ambiguous  -> we do not know whether it applied. Retry once, then defer to
- *                 tomorrow, because every extra attempt can mint a duplicate.
+ *   ambiguous  -> we do not know whether it applied. Retry once, then hold
+ *                 the batch for a growing interval (1h, 2h, 4h ... 24h),
+ *                 because every extra attempt can mint a duplicate. With a
+ *                 tail run every 2 minutes, "defer to the next run" would
+ *                 mean ~1400 re-sends a day of a batch that may have landed.
  */
 import type { Config } from '../config.ts';
 import type { Repo } from '../db/repo.ts';
@@ -24,7 +27,7 @@ import type { RecordOutcome, SwipeEventRow, ZingSwipe } from '../types.ts';
 import type { SyncVerdict } from '../zinghr.ts';
 import { ZingAuthError, ZingProtocolError } from '../zinghr.ts';
 import { bisect } from '../bisect.ts';
-import { backoffMs, classifyNetworkError, type Classification } from '../retry.ts';
+import { ambiguousHoldMs, backoffMs, classifyNetworkError, type Classification } from '../retry.ts';
 
 export interface Publisher {
   authenticate(): Promise<string>;
@@ -128,11 +131,20 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
     }
   };
 
-  // A deferral returns records to 'pending' so tomorrow can pick them up --
-  // which means this run must STOP rather than re-claim them, or the drain
+  // A deferral returns records to 'pending' so a later run can pick them up
+  // -- which means this run must STOP rather than re-claim them, or the drain
   // loop spins on the same batch forever. Deferrals are systemic anyway
   // (network, gateway, unknown outcome); continuing would only add load.
   let stop: string | undefined;
+
+  // The hold grows with the batch's worst ambiguous_count (pre-increment), so
+  // a batch that keeps timing out is retried strictly less often each time.
+  const holdUntil = (batch: SwipeEventRow[]): number =>
+    Date.now() + ambiguousHoldMs(
+      Math.max(0, ...batch.map((r) => r.ambiguous_count)),
+      cfg.AMBIGUOUS_HOLD_MS,
+      cfg.AMBIGUOUS_HOLD_CAP_MS,
+    );
 
   while (!stop) {
     const rows = repo.claimBatch(cfg.BATCH_SIZE);
@@ -163,13 +175,16 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
         if (c.kind === 'ambiguous') {
           ambiguousAttempts++;
           if (ambiguousAttempts > cfg.AMBIGUOUS_RETRIES) {
-            // Stop for tonight. A day sitting incomplete for 24 hours costs
+            // Stop and hold. A batch sitting pending for an hour costs
             // nothing; four copies in payroll costs a conversation.
-            repo.releaseAmbiguous(ids, c.detail, null);
+            const until = holdUntil(rows);
+            repo.releaseAmbiguous(ids, c.detail, until);
             stats.ambiguous += ids.length;
             // ms is the diagnosis here: a duration at the headers timeout
             // means the batch is too large, not that the network is unwell.
-            log('publish.ambiguous.defer', { count: ids.length, ms: lastPostMs, detail: c.detail });
+            log('publish.ambiguous.defer', {
+              count: ids.length, ms: lastPostMs, holdUntil: new Date(until).toISOString(), detail: c.detail,
+            });
             stop = `ambiguous: ${c.detail}`;
             settled = true;
             break;
@@ -274,9 +289,12 @@ export async function publish(deps: PublishDeps): Promise<PublishStats> {
           log('publish.abort', { reason: c.detail, during: 'bisect' });
           return stats;
         }
-        repo.releaseAmbiguous(ids, c.detail, null);
+        const until = holdUntil(rows);
+        repo.releaseAmbiguous(ids, c.detail, until);
         stats.ambiguous += ids.length;
-        log('publish.bisect.failed', { count: ids.length, detail: c.detail });
+        log('publish.bisect.failed', {
+          count: ids.length, holdUntil: new Date(until).toISOString(), detail: c.detail,
+        });
         stop = `bisect interrupted: ${c.detail}`;
         break;
       }

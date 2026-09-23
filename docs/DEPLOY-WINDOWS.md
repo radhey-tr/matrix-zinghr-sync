@@ -1,6 +1,6 @@
 # Deploying on Windows Server
 
-Target: a resident service that runs the sync nightly, restarts on crash, and
+Target: a resident service that runs the sync on both schedules, restarts on crash, and
 starts on boot without anyone logged in.
 
 Nothing here needs a build toolchain **if** the `better-sqlite3` prebuilt
@@ -62,6 +62,7 @@ Node accepts them on Windows and it avoids escaping headaches:
     ZINGHR_API_PERMISSION=SSWP
     TIMEZONE=Asia/Kolkata
     SCHEDULE=30 0 * * *
+    TAIL_SCHEDULE=*/2 * * * *
 
 Create the data directory and lock the file down — it holds both systems'
 credentials:
@@ -131,8 +132,8 @@ stop the service — the heartbeat is what catches that.
     nssm status MatrixZingHRSync              # SERVICE_RUNNING
     Get-Content .\logs\out.log -Tail 20
 
-You should see `scheduler.started` and a `scheduler.next` timestamp. The
-service now sits idle until `SCHEDULE` fires.
+You should see `scheduler.started` and a `scheduler.next` timestamp for each
+job. The service now sits idle until `TAIL_SCHEDULE` or `SCHEDULE` fires.
 
 Force a run without waiting for midnight — stop the service first, since the
 lock file prevents two runs at once:
@@ -145,10 +146,17 @@ lock file prevents two runs at once:
 
 ## Alternative: Task Scheduler instead of a service
 
-Valid, and simpler in some ways — Windows guarantees the invocation, so there
-is no resident process to die quietly between runs. The trade is that a task
-tied to a user account stops working when that password expires, and the
-failure is silent.
+Valid for the nightly alone, and simpler in some ways — Windows guarantees the
+invocation, so there is no resident process to die quietly between runs. The
+trade is that a task tied to a user account stops working when that password
+expires, and the failure is silent.
+
+**With the tail on, use the service.** Task Scheduler's minimum repeat
+interval is 5 minutes, so it cannot drive a 2-minute tail at all. Even at a
+coarser interval it is the wrong tool here: a scheduled task that collides
+with a running one is *skipped*, not queued — so the nightly can be lost for
+the day whenever a tail tick happens to be running at 00:30. The resident
+process serialises them instead: the nightly waits.
 
     schtasks /create /tn "MatrixZingHRSync" /sc daily /st 00:30 ^
       /tr "\"C:\Program Files\nodejs\node.exe\" --env-file=C:\services\matrix-zinghr-sync\.env C:\services\matrix-zinghr-sync\dist\main.js --once" ^

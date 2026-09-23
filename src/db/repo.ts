@@ -4,7 +4,7 @@
  * pipeline stages.
  */
 import type { Db } from './index.ts';
-import type { RecordOutcome, SwipeEventRow, SyncDayRow } from '../types.ts';
+import type { RecordOutcome, RunMode, SwipeEventRow, SyncDayRow } from '../types.ts';
 
 export interface StageableSwipe {
   attendanceDate: string;
@@ -157,17 +157,22 @@ export class Repo {
    * Crash recovery. Runs are serialised by a lock file, so anything left
    * in_flight belongs to a run that died — no lease protocol needed.
    *
-   * Note these are ambiguous by nature: the batch may have reached ZingHR
-   * before the crash. The caller counts them accordingly.
+   * These are ambiguous by nature: the batch may have reached ZingHR before
+   * the crash. So they are held like any other ambiguous send, base * 2^count
+   * capped — with a tail run every 2 minutes, a process that dies mid-POST
+   * on every tick would otherwise re-send the same batch ~700 times a day.
+   * `ambiguous_count` in the expression is the pre-update value.
    */
-  reclaimInFlight(): number {
+  reclaimInFlight(holdBaseMs = 0, holdCapMs = 0): number {
     return this.db
       .prepare(
         `UPDATE swipe_event
-         SET state = 'pending', ambiguous_count = ambiguous_count + 1
+         SET state = 'pending',
+             ambiguous_count = ambiguous_count + 1,
+             next_attempt_at = ? + MIN(?, ? << MIN(ambiguous_count, 20))
          WHERE state = 'in_flight'`,
       )
-      .run().changes;
+      .run(Date.now(), holdCapMs, holdBaseMs).changes;
   }
 
   claimBatch(limit: number): SwipeEventRow[] {
@@ -335,11 +340,11 @@ export class Repo {
     ).map((r) => r.d);
   }
 
-  startRun(correlationId: string): number {
+  startRun(correlationId: string, mode: RunMode = 'nightly'): number {
     return Number(
       this.db
-        .prepare(`INSERT INTO run_log (correlation_id, started_at) VALUES (?, ?)`)
-        .run(correlationId, Date.now()).lastInsertRowid,
+        .prepare(`INSERT INTO run_log (correlation_id, started_at, mode) VALUES (?, ?, ?)`)
+        .run(correlationId, Date.now(), mode).lastInsertRowid,
     );
   }
 
@@ -356,10 +361,10 @@ export class Repo {
       );
   }
 
-  lastSuccessfulRunAt(): number | null {
+  lastSuccessfulRunAt(mode: RunMode): number | null {
     const r = this.db
-      .prepare(`SELECT MAX(finished_at) AS t FROM run_log WHERE outcome = 'ok'`)
-      .get() as { t: number | null };
+      .prepare(`SELECT MAX(finished_at) AS t FROM run_log WHERE outcome = 'ok' AND mode = ?`)
+      .get(mode) as { t: number | null };
     return r.t;
   }
 

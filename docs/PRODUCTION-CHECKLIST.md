@@ -7,13 +7,36 @@ or data loss if skipped.
 
 - [ ] **BLOCKING — `HEARTBEAT_URL`.** Create a dead-man's-switch check
       (healthchecks.io, Cronitor, Better Stack, or self-hosted *somewhere other
-      than this box*), period 24h, grace 2h. Set `HEARTBEAT_URL` to its ping URL.
+      than this box*). With the tail on (default), period 2 min, grace 5 min;
+      with `TAIL_SCHEDULE` blank, period 24h, grace 2h. Set `HEARTBEAT_URL` to
+      its ping URL.
 
-      Why it is blocking: every other alert runs *inside* the nightly job. If
-      the job never runs — box rebooted, service not restarted, scheduler
+      Why it is blocking: every other alert runs *inside* the job. If the
+      process never runs — box rebooted, service not restarted, scheduler
       disabled, disk full — nothing alerts, and silence is indistinguishable
-      from success. At one run a night on a monthly payroll cycle that can go
-      unnoticed for weeks. This is the only check that catches it.
+      from success. The client now expects swipes in ZingHR within minutes;
+      this is the only check that notices when they stop arriving.
+
+- [ ] **BLOCKING — measure one tail fetch against production COSEC before
+      enabling the 2-minute cadence.** Run `npm run run:tail` with
+      `DRY_RUN=true` late in a working day and note the fetch duration in the
+      log. At 2-minute ticks COSEC runs that report query ~720 times a day;
+      UAT took ~2.5 s for 3,906 rows, but production is ~5× the volume on a
+      box that also runs door control. If a late-day fetch approaches ~30 s,
+      raise `TAIL_SCHEDULE` to `*/5` rather than pushing it.
+- [ ] **Ask ZingHR whether the sync endpoint is rate-limited.** The tail makes
+      up to ~720 token + POST pairs a day instead of ~20. Nothing observed on
+      UAT suggests a limit, but nobody has asked.
+- [ ] Tell the client what "realtime" means: about a minute after COSEC
+      records the swipe. Swipes from offline or batch-synced readers reach
+      COSEC late — sometimes days — and no sync cadence changes that; they
+      arrive via the nightly sweep. Set this expectation before go-live, not
+      after the first "missing punch" ticket.
+- [ ] After two weeks live, re-measure arrival lag on production data
+      (`eventdatetime` vs `idatetime`). The UAT figures come from a
+      commissioning-period dataset and overstate lateness, so they are a
+      ceiling rather than a baseline. `SWEEP_DAYS` and `RETENTION_DAYS` are
+      sized against them and can only be relaxed once real numbers exist.
 
 - [ ] Switch both URLs to production hosts (`mservices.zinghr.com`).
 - [ ] Set `ZINGHR_API_PERMISSION=SSWP` — the prod doc shows uppercase, UAT lowercase.

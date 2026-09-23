@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { openDb, migrate, type Db } from '../src/db/index.ts';
 import { Repo } from '../src/db/repo.ts';
-import { runOnce } from '../src/run/index.ts';
+import { runOnce, runTail } from '../src/run/index.ts';
 import { acquireLock, LockHeldError } from '../src/run/lock.ts';
 import { addDays, daysBetween, todayIso } from '../src/run/dates.ts';
 import type { Config } from '../src/config.ts';
@@ -17,6 +17,7 @@ const cfg = {
   TIMEZONE: 'Asia/Kolkata', SWEEP_DAYS: 3, MAX_DAYS_PER_RUN: 5, BATCH_SIZE: 100,
   MAX_ATTEMPTS: 3, AMBIGUOUS_RETRIES: 1, QUARANTINE_DAYS: 7, STALL_DAYS: 3,
   BACKOFF_BASE_MS: 1, BACKOFF_CAP_MS: 1, DRY_RUN: false,
+  AMBIGUOUS_HOLD_MS: 3_600_000, AMBIGUOUS_HOLD_CAP_MS: 86_400_000,
   RETENTION_DAYS: 180, RUN_LOG_RETENTION_DAYS: 365,
   COSEC_RESPONSE_KEY: 'template-data', COSEC_FIELD_EMP: 'userid',
   COSEC_FIELD_DATETIME: 'eventdatetime', COSEC_FIELD_UNIQUE: 'indexno',
@@ -25,7 +26,8 @@ const cfg = {
 } as unknown as Config;
 
 const NOW = new Date('2026-08-26T02:00:00Z');
-const YESTERDAY = addDays(todayIso(NOW, 'Asia/Kolkata'), -1);
+const TODAY = todayIso(NOW, 'Asia/Kolkata');
+const YESTERDAY = addDays(TODAY, -1);
 
 const row = (idx: string, dateMMDDYYYY: string, emp = '2349') => ({
   userid: emp, indexno: idx, mastercontrollerid: '2113',
@@ -117,6 +119,92 @@ describe('the sweep is what catches late-arriving swipes', () => {
     const second = await runOnce(deps(() => rows));
     assert.equal(second.publish.sent, 0, 're-reading must never re-send');
     assert.equal(second.publish.calls, 0, 'and must not even call ZingHR');
+  });
+});
+
+describe('the tail run makes today reach ZingHR within minutes', () => {
+  const dayState = (d: string) =>
+    (db.prepare('SELECT state FROM sync_day WHERE attendance_date = ?').get(d) as { state: string } | undefined)?.state;
+
+  test('fetches today only, stages it, publishes, and touches nothing else', async () => {
+    const asked: string[] = [];
+    const s = await runTail(deps((f, t) => {
+      asked.push(`${f}..${t}`);
+      return [row('1', '08/26/2026'), row('2', '08/26/2026')];
+    }));
+
+    assert.equal(s.mode, 'tail');
+    assert.equal(s.outcome, 'ok');
+    assert.deepEqual(asked, [`${TODAY}..${TODAY}`], 'one request, today, no sweep');
+    assert.equal(s.publish.sent, 2);
+    assert.equal(s.sweptDays, 0);
+    assert.equal(dayState(TODAY), 'pending', 'today is left for the nightly to stage as yesterday');
+    assert.equal(dayState(YESTERDAY), undefined, 'the tail does not create yesterday');
+  });
+
+  test('re-reading today every tick sends only what is new', async () => {
+    let cosecHolds = [row('1', '08/26/2026')];
+    const first = await runTail(deps(() => cosecHolds));
+    assert.equal(first.publish.sent, 1);
+
+    const second = await runTail(deps(() => cosecHolds));
+    assert.equal(second.publish.calls, 0, 'nothing new, ZingHR not contacted');
+
+    cosecHolds = [...cosecHolds, row('2', '08/26/2026')];
+    const third = await runTail(deps(() => cosecHolds));
+    assert.equal(third.newlyStaged, 1);
+    assert.equal(third.publish.sent, 1, 'only the swipe recorded since the last tick');
+  });
+
+  test('a COSEC failure is partial, not fatal, and still drains held work', async () => {
+    // Earlier tick staged a swipe but ZingHR was down; this tick cannot reach
+    // COSEC. The staged swipe must still go.
+    await runTail(deps(() => [row('1', '08/26/2026')], {
+      authenticate: async () => 'tok',
+      postBatch: async () => { throw Object.assign(new Error('ECONNREFUSED'), { code: 'ECONNREFUSED' }); },
+    }));
+    assert.equal(repo.pendingCount(), 1);
+
+    const s = await runTail(deps(() => { throw new Error('COSEC HTTP 503'); }));
+    assert.equal(s.outcome, 'partial');
+    assert.equal(s.publish.sent, 1, 'publishing does not depend on the fetch');
+  });
+
+  test('the nightly neither stages nor settles the day the tail is filling', async () => {
+    // A tail tick has run today. The nightly at 00:30 must leave today alone:
+    // staging it would flip it to `staged` and it would miss its "yesterday"
+    // fetch tomorrow; settling it would mark a day still in progress complete.
+    await runTail(deps(() => [row('t1', '08/26/2026')]));
+
+    const asked: string[] = [];
+    const s = await runOnce(deps((f) => {
+      asked.push(f);
+      return f === TODAY ? [row('t1', '08/26/2026'), row('t2', '08/26/2026')] : [row('y1', '08/25/2026')];
+    }));
+
+    assert.ok(!asked.includes(TODAY), 'the nightly never asks COSEC for today');
+    assert.ok(!s.daysProcessed.includes(TODAY));
+    assert.equal(dayState(TODAY), 'pending', 'still the tail’s day');
+    assert.equal(dayState(YESTERDAY), 'complete');
+
+    // And tomorrow's nightly picks it up exactly as any other yesterday.
+    const TOMORROW = new Date(NOW.getTime() + 86_400_000);
+    const next = await runOnce({ ...deps((f) => (f === TODAY ? [row('t1', '08/26/2026'), row('t2', '08/26/2026')] : [])), now: () => TOMORROW });
+    assert.ok(next.daysProcessed.includes(TODAY), 'staged as yesterday');
+    assert.equal(next.publish.sent, 1, 'only t2 -- t1 went via the tail');
+    assert.equal(dayState(TODAY), 'complete');
+  });
+
+  test('dry run stages today and never contacts ZingHR', async () => {
+    let called = false;
+    const spy: Publisher = {
+      authenticate: async () => { called = true; return 'tok'; },
+      postBatch: async () => ({ kind: 'accepted' }),
+    };
+    const s = await runTail({ ...deps(() => [row('1', '08/26/2026')], spy), cfg: { ...cfg, DRY_RUN: true } });
+    assert.equal(called, false);
+    assert.equal(s.newlyStaged, 1);
+    assert.equal(repo.pendingCount(), 1);
   });
 });
 

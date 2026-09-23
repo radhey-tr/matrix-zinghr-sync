@@ -1,10 +1,15 @@
 # matrix-zinghr-sync
 
-Nightly sync of biometric swipe data from **Matrix COSEC** to **ZingHR** payroll.
+Sync of biometric swipe data from **Matrix COSEC** to **ZingHR** payroll.
 
-One day's swipes per night, each delivered exactly once. Recovery comes from a
-ledger that remembers what succeeded rather than from re-sending, so nothing
-lands in ZingHR twice unless the network genuinely left us unsure.
+Two cadences. A **tail** run every 2 minutes fetches today's swipes and
+delivers them, so a punch reaches ZingHR about a minute after COSEC records
+it.
+A **nightly** run owns the day lifecycle: it stages yesterday, re-reads the
+last ten days for late arrivals, settles days and prunes the ledger. Each
+swipe is delivered exactly once. Recovery comes from a ledger that remembers
+what succeeded rather than from re-sending, so nothing lands in ZingHR twice
+unless the network genuinely left us unsure.
 
 Design rationale: [`design-plan.html`](design-plan.html) ·
 Observed API behaviour: [`docs/API-NOTES.md`](docs/API-NOTES.md)
@@ -15,8 +20,9 @@ Observed API behaviour: [`docs/API-NOTES.md`](docs/API-NOTES.md)
     cp .env.example .env        # fill in credentials
     npm run build               # bundles to dist/, no experimental flags
     npm run doctor              # check the COSEC mapping against live data
-    npm run run:once            # one run (set DRY_RUN=true first)
-    npm start                   # resident process, runs on SCHEDULE
+    npm run run:once            # one nightly run (set DRY_RUN=true first)
+    npm run run:tail            # one tail run
+    npm start                   # resident process, runs on SCHEDULE and TAIL_SCHEDULE
 
 Configuration is read from `.env` by Node's own `--env-file`, so there is no
 dotenv dependency and the service needs no wrapper script to set variables.
@@ -25,6 +31,35 @@ For development against the TypeScript sources directly, `npm run dev:once`
 and `npm run dev:cli` use `.env.local`.
 
 ## How a run works
+
+The **tail** (`TAIL_SCHEDULE`, default every 2 minutes):
+
+    reclaim   rows left in_flight by a run that died (counted as ambiguous)
+    fetch     re-read TODAY from COSEC, stage what is new
+    publish   drain to ZingHR
+
+That is all it does. It never sweeps, settles, prunes or reports, and it leaves
+today's day row untouched so the nightly picks it up as "yesterday" exactly as
+it always has. COSEC filters by date only, so every tick re-downloads all of
+today (~4 MB by evening at production volume); the identity column dedupes, so
+only rows recorded since the last tick are sent.
+
+**"Realtime" means about a minute after COSEC has the swipe.** COSEC records
+an online swipe within ~2-5 s of the punch (p90, measured), so polling latency
+is the whole delay: the average swipe waits half the interval, ~60 s.
+
+Two minutes rather than one is deliberate. Halving the interval again saves
+30 s nobody perceives and doubles the load on COSEC, which is the constrained
+side — every tick re-downloads all of today, and each one is a report query
+against the attendance server that also runs door control. See
+[`docs/API-NOTES.md`](docs/API-NOTES.md).
+
+Swipes from readers that are offline or batch-synced still arrive whenever
+COSEC gets them, and are delivered by the nightly sweep. The tail does not
+change what ZingHR eventually holds — only how soon the prompt majority gets
+there.
+
+The **nightly** (`SCHEDULE`, default 00:30):
 
     reclaim   rows left in_flight by a run that died (counted as ambiguous)
     requeue   quarantined swipes get another attempt
@@ -46,7 +81,7 @@ because the identity column dedupes at the database level.
     npm run doctor [date]       COSEC shape vs configured mapping
     npm run cli day 2026-08-25  detail for one date
     npm run cli reopen <date>   re-fetch a settled day (sends only new rows)
-    npm run cli queue <date>    force a date in: today, or one the sweep has passed
+    npm run cli queue <date>    force a date in that the sweep has passed
     npm run cli replay          return quarantined/abandoned swipes to the queue
     npm run cli pending [n]     payloads that would go next
 
@@ -124,9 +159,16 @@ cleared to stop sending either field without a code change.
 - **A ZingHR outage never blames the payload.** Batch- and run-scoped failures
   return swipes to the queue with their attempt count untouched; only a
   rejection naming a specific swipe advances it toward abandonment.
-- **Ambiguous sends retry once, then wait for tomorrow.** A timeout after the
-  request was sent leaves the outcome unknown; each extra retry can mint
-  another duplicate.
+- **Ambiguous sends retry once, then are held — 1h, 2h, 4h … 24h.** A timeout
+  after the request was sent leaves the outcome unknown; each extra retry can
+  mint another duplicate, and ZingHR has no read-back to reconcile against.
+  With a run every 2 minutes, "retry next run" would be ~1400 re-sends a day,
+  so the hold grows with every ambiguous outcome (`AMBIGUOUS_HOLD_MS`). Rows
+  reclaimed after a crash mid-POST are held the same way.
+- **Tail runs alert only about themselves.** A tail tick reports a failed run
+  or rejected credentials, once per distinct cause. Everything ledger-wide —
+  abandoned swipes, stalled days, repeated ambiguity — is in the nightly
+  report, which always goes out.
 
 ## Deployment
 
@@ -146,9 +188,11 @@ systemd, or NSSM on Windows. Outbound access to COSEC and
 `mservices.zinghr.com`. ZingHR's App Registration may have IP allowlisting, in
 which case the egress IP must be registered.
 
-Set `HEARTBEAT_URL` to an external dead-man's-switch. A nightly job can be dead
-for a fortnight before anyone notices, and internal monitoring cannot report
-its own death.
+Set `HEARTBEAT_URL` to an external dead-man's-switch. A job can be dead for a
+fortnight before anyone notices, and internal monitoring cannot report its own
+death. Every successful run of either cadence pings it, so with the tail on
+the check's expected period is the tail interval (2 min, grace ~5), not a
+day — a stopped process then surfaces in minutes.
 
 `npm run build` produces `dist/` (~53 KB). Runtime dependencies stay external,
 so `node_modules` ships alongside — unavoidable regardless, since

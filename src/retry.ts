@@ -166,6 +166,16 @@ export function backoffMs(attempt: number, baseMs: number, capMs: number, rng = 
   return Math.floor(rng() * ceiling);
 }
 
+/**
+ * How long an ambiguous batch is held before it may be claimed again:
+ * base * 2^count, capped. No jitter -- this is a hold, not a herd control,
+ * and the point is that each further attempt at a possibly-delivered batch
+ * happens strictly less often than the last.
+ */
+export function ambiguousHoldMs(ambiguousCount: number, baseMs: number, capMs: number): number {
+  return Math.min(capMs, baseMs * 2 ** Math.min(Math.max(0, ambiguousCount), 20));
+}
+
 /*
  * NOTE: the retry LADDER itself lives in src/run/publish.ts, not here.
  *

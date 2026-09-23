@@ -13,6 +13,14 @@ export type DayState = (typeof DAY_STATES)[number];
 export const SWIPE_STATES = ['pending', 'in_flight', 'sent', 'quarantined', 'abandoned'] as const;
 export type SwipeState = (typeof SWIPE_STATES)[number];
 
+/**
+ * The two cadences. `nightly` owns the day lifecycle: stage yesterday, sweep,
+ * settle, prune, report. `tail` only fetches today and publishes, so that
+ * swipes reach ZingHR within minutes instead of the next morning.
+ */
+export const RUN_MODES = ['nightly', 'tail'] as const;
+export type RunMode = (typeof RUN_MODES)[number];
+
 /** A swipe exactly as COSEC hands it to us, before any interpretation. */
 export interface CosecSwipe {
   empIdentification: string;
