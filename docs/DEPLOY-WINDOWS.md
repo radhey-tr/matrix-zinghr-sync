@@ -105,11 +105,16 @@ Run these **as Administrator**:
     nssm set MatrixZingHRSync AppExit Default Restart
     nssm set MatrixZingHRSync AppRestartDelay 30000
 
-    REM logs, rotated at 10MB so they cannot fill the disk
+    REM logs, rotated at 10MB while running (without AppRotateOnline NSSM
+    REM only rotates at service start, and the service rarely restarts)
     nssm set MatrixZingHRSync AppStdout "C:\services\matrix-zinghr-sync\logs\out.log"
     nssm set MatrixZingHRSync AppStderr "C:\services\matrix-zinghr-sync\logs\err.log"
     nssm set MatrixZingHRSync AppRotateFiles 1
+    nssm set MatrixZingHRSync AppRotateOnline 1
     nssm set MatrixZingHRSync AppRotateBytes 10485760
+
+    REM NSSM never deletes rotated files; prune them after 90 days
+    schtasks /create /tn "MatrixZingHRSync log prune" /sc daily /st 03:00 /ru SYSTEM /tr "forfiles /p C:\services\matrix-zinghr-sync\logs /m *-*.log /d -90 /c \"cmd /c del @path\""
 
     mkdir C:\services\matrix-zinghr-sync\logs
     nssm start MatrixZingHRSync
@@ -117,6 +122,12 @@ Run these **as Administrator**:
 
 `AppDirectory` matters: `.env`, `dist/` and the relative paths all resolve from
 it.
+
+At `LOG_LEVEL=info` the tail's every-2-minute ticks add up to roughly a few
+hundred MB to 1 GB a year, so the prune task is what keeps disk use bounded
+(about 90 days' worth). Rotated files are named like
+`out-20261013T031500.123.log`; the `*-*.log` mask matches only those, never
+the live `out.log` / `err.log`.
 
 The service runs as `LocalSystem` by default, which is fine for a local SQLite
 file and outbound HTTPS. To use a dedicated account instead:
